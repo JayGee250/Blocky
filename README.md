@@ -1,6 +1,6 @@
 # Family Blockblast
 
-A calm block puzzle for the family, built as a Home Screen app for iPhone. Plain static files with no build step: `index.html` is the app, `engine/` is the game logic. It works offline, and every player's saved game and top 10 stay on the phone. No accounts, no ads, no tracking, nothing is sent anywhere.
+A calm block puzzle for the family, built as a Home Screen app for iPhone. Plain static files with no build step: `index.html` is the app, `engine/` is the game logic. It works offline, and every player's saved game and top 10 stay on the phone. Signing in to a family account is optional: it backs a player's scores and saved game up to the family's Firebase project and adds a family leaderboard. No ads, no tracking.
 
 ## Add it to an iPhone
 
@@ -15,6 +15,27 @@ Each phone keeps its own players and scores. A game played in a Safari tab is se
 
 When the app is updated, it picks up the new version the next time it is opened with a connection (sometimes it takes a second launch).
 
+## Family accounts (Firebase)
+
+Each player can sign in from **Settings > Family account** with an email and password. Signing in is optional and per player, and the game plays exactly the same without it, online or offline.
+
+- **What is stored:** for each family member, their name, top 10 scores and saved game (`users/{uid}`), and one row with their best score on the family leaderboard (`leaderboard/{uid}`). Nothing else.
+- **Who can see it:** only accounts whose email is on the family list (the `family` collection in Firestore, added by hand in the console). Each person can read and change only their own backup; everyone on the family list can read the leaderboard. See `firestore.rules`.
+- **Syncing:** the phone always keeps its own copy and plays from it. When online, the app merges with the account on launch, a little after each move, when the app is closed, and when a game ends. Scores from both sides are combined into one top 10, and the saved game that changed last wins. So signing in for the first time keeps the scores already on the phone, and a second phone signed in to the same account picks up the game in progress.
+- Several family members can stay signed in on a shared phone, each on their own player. One account belongs to one player per phone.
+- Signing out keeps everything on the phone; signing in again merges.
+
+### Setting it up in the Firebase console (project Bloxx, `bloxx-6d09c`)
+
+1. **Sign-in:** Build > Authentication > Get started > Sign-in method > Email/Password > Enable (leave "Email link" off) > Save.
+2. **Database:** Build > Firestore Database > Create database > Standard edition, a location near you, **Start in production mode** > Create.
+3. **Rules:** Firestore Database > Rules > replace everything with the contents of `firestore.rules` > Publish.
+4. **Family list:** Firestore Database > Data > Start collection > Collection ID `family` > Document ID = a family member's email in lowercase (for example `mia@example.com`) > add any field, such as `name` = `Mia` > Save. Add one document per family member with Add document. Someone not on the list can still play and create an account, but their account shows "Not on the family list yet" and nothing is shared.
+5. **Allowed address:** Authentication > Settings > Authorized domains > Add domain > `jaygee250.github.io`.
+6. **Config:** Project settings (gear icon) > General > Your apps. If there is no web app yet, click the `</>` icon, give it a nickname such as Blockblast, leave Hosting unticked and Register app. Copy `apiKey` and `appId` from the config shown there into `app/firebase-config.js` (the other values are already filled in). Until `apiKey` is filled in, the app hides sign-in and stays local only.
+
+The config values are identifiers, not secrets: they are meant to be in the app. The rules are what keep the data private. Never put a service account key or any password in this repository.
+
 ## For developers
 
 - `npm test` (or `node --test test/*.test.js`) runs the tests.
@@ -23,6 +44,8 @@ When the app is updated, it picks up the new version the next time it is opened 
 - `node tools/check-app.js [folder]` plays the app in phone-sized Chromium (players, dragging, offline reload) and saves screenshots. Needs Playwright.
 - `node tools/build-play.js` builds `web/play.html`, the whole app inlined into one file for sharing a preview.
 - `node tools/make-icons.js` redraws the app icons. Needs Playwright.
+- `node tools/check-cloud.js` tests `firestore.rules` and family accounts in the app against the local Firebase emulators (needs Java). Setup and command are at the top of the file.
+- `npx firebase deploy --only firestore:rules` publishes `firestore.rules` from the command line instead of the console (after `npx firebase login`).
 - `node tools/simulate.js [games] [skill]` plays bot games and prints generator speed, how often rounds land in the difficulty band, and game length.
 - `node tools/curve.js [games] [profiles]` measures the difficulty curve: loss chance per round at each level for four bot skill levels, and how far each gets in a normal game. Use this after changing `engine/difficulty.js`.
 
@@ -42,7 +65,12 @@ When the app is updated, it picks up the new version the next time it is opened 
 | `manifest.webmanifest` | App name, icons and full-screen display for Add to Home Screen |
 | `sw.js` | Service worker: keeps a copy of every file so the app works offline |
 | `app/main.js` | Game screen, dragging, player picker, scores and settings |
-| `app/profiles.js` | Players, per-player saved games and top 10s, settings, all in localStorage |
+| `app/profiles.js` | Players, per-player saved games and top 10s, settings, account links, all in localStorage |
+| `app/sync.js` | Merges a signed-in player's scores and saved game with their account, safe to repeat |
+| `app/cloud.js` | Firebase sign-in and Firestore reads and writes, loaded only when someone uses an account |
+| `app/firebase-config.js` | The Firebase project's web config (public identifiers) and SDK version |
+| `firestore.rules` | Who can read and write what in Firestore, with plain-language comments |
+| `firebase.json` | Firebase CLI settings: rules file and emulator ports |
 | `app/feedback.js` | Optional sound (generated tones) and vibration, both off by default |
 | `app/app.css` | Look: level colors, safe areas, no page scroll or zoom |
 | `app/icons/` | App icons (`icon.svg` is the source) |

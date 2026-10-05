@@ -1,5 +1,14 @@
 # Changelog
 
+## Thread 4: family accounts with Firebase (2026-10-05)
+
+- Optional sign-in per player (email and password, Firebase Authentication) from Settings > Family account, with create account and forgot password.
+- Signed-in players' top 10 and saved game are backed up to Cloud Firestore and merged on every phone they sign in on. A family leaderboard shows everyone's best on the Scores card.
+- Local play is unchanged: the phone keeps its own copy, the app starts and plays offline, and the Firebase SDK (12.19.0, from Google's CDN) only loads when an account is used.
+- `firestore.rules`: only emails on the family list get in; each person reads and writes only their own backup and leaderboard row.
+- `app/firebase-config.js` holds the project's web config; sign-in stays hidden until `apiKey` is filled in. The service worker refreshes this file in the background so a pasted config takes effect without a version bump.
+- `test/sync.test.js` (merging scores and saved games), `tools/check-cloud.js` (rules and the app against the Firebase emulators).
+
 ## Thread 3: installable iPhone app (2026-10-05)
 
 - Moved to GitHub (JayGee250/blockblast), published with GitHub Pages. The repository is now the source of truth.

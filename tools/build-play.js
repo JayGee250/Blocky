@@ -10,11 +10,13 @@ const strip = (src) => src.replace(/^import .*$/gm, '').replace(/^export /gm, ''
 
 const modules = [
   ...['rng', 'pieces', 'board', 'solver', 'scoring', 'difficulty', 'generator', 'game'].map((n) => `engine/${n}.js`),
-  'app/profiles.js', 'app/feedback.js', 'app/main.js',
+  'app/profiles.js', 'app/feedback.js', 'app/sync.js', 'app/firebase-config.js', 'app/main.js',
 ];
 const code = modules.map((path) => `// --- ${path} ---\n${strip(read(path))}`).join('\n');
 
+// The preview has no cloud.js or service worker: data-preview keeps family accounts off.
 const html = read('index.html')
+  .replace('<html lang="en">', '<html lang="en" data-preview>')
   .replace(/^<link rel="(manifest|icon|apple-touch-icon)".*\n/gm, '')
   .replace('<link rel="stylesheet" href="app/app.css">', () => `<style>\n${read('app/app.css')}</style>`)
   .replace('<script type="module" src="app/main.js"></script>', () => `<script>\n(() => {\n${code}\n})();\n</script>`);

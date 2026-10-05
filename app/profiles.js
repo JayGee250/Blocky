@@ -1,12 +1,14 @@
 // Family players, their saved games and top 10s, and the phone's settings.
-// Everything lives in localStorage on this phone: no accounts, no network.
+// Everything lives in localStorage on this phone. A player can also be linked
+// to a family account (app/sync.js copies their data to and from Firebase), but
+// this file never touches the network.
 // `storage` is anything with getItem/setItem/removeItem, so tests can pass a fake.
 
 export const MAX_SCORES = 10;
 export const MAX_NAME = 16;
 export const DEFAULT_SETTINGS = Object.freeze({ sound: false, haptics: false, theme: 'auto' });
 
-const PLAYERS = 'bb-players', CURRENT = 'bb-current', SETTINGS = 'bb-settings', MIGRATED = 'bb-migrated';
+const PLAYERS = 'bb-players', CURRENT = 'bb-current', SETTINGS = 'bb-settings', MIGRATED = 'bb-migrated', BOARD = 'bb-board';
 // Keys used by the single-player test page, moved into players on first run.
 const LEGACY = { game: 'bb-game', colors: 'bb-game-colors', scores: 'bb-scores', name: 'bb-name' };
 
@@ -53,7 +55,7 @@ export function createProfiles(storage) {
 
   function removePlayer(id) {
     savePlayers(players().filter((p) => p.id !== id));
-    for (const what of ['game', 'colors', 'scores']) del(key(id, what));
+    for (const what of ['game', 'colors', 'scores', 'gameAt', 'synced']) del(key(id, what));
     if (get(CURRENT, null) === id) del(CURRENT);
   }
 
@@ -79,7 +81,15 @@ export function createProfiles(storage) {
     const colors = get(key(id, 'colors'), null);
     return { state, colors: Array.isArray(colors) && colors.length === 64 ? colors : Array(64).fill(null) };
   }
-  function saveGame(id, state, colors) { return set(key(id, 'game'), state) && set(key(id, 'colors'), colors); }
+  // gameAt is when the saved game last changed, so two phones signed in to the
+  // same account keep the newer one. A fresh game nobody has moved in keeps the
+  // old time, so it never replaces a game in progress on another phone.
+  function saveGame(id, state, colors, at = state.moves > 0 ? Date.now() : gameAt(id)) {
+    return set(key(id, 'game'), state) && set(key(id, 'colors'), colors) && set(key(id, 'gameAt'), at);
+  }
+  function gameAt(id) { return Number(get(key(id, 'gameAt'), 0)) || 0; }
+  // Another phone finished or abandoned the game at time `at`.
+  function clearGame(id, at) { del(key(id, 'game')); del(key(id, 'colors')); set(key(id, 'gameAt'), at); }
 
   function scores(id) {
     const list = get(key(id, 'scores'), []);
@@ -98,6 +108,33 @@ export function createProfiles(storage) {
     return { list, rank: list.indexOf(entry) };
   }
   function best(id) { return scores(id)[0]?.score || 0; }
+  function setScores(id, list) { return set(key(id, 'scores'), list.slice(0, MAX_SCORES)); }
+
+  // Family account link: the account's uid and email live on the player.
+  function link(id, { uid, email }) {
+    const list = players();
+    const p = list.find((x) => x.id === id);
+    if (!p || list.some((x) => x.uid === uid && x.id !== id)) return null;
+    Object.assign(p, { uid, email });
+    savePlayers(list);
+    return p;
+  }
+  function unlink(id) {
+    const list = players();
+    const p = list.find((x) => x.id === id);
+    if (!p) return;
+    delete p.uid; delete p.email;
+    savePlayers(list);
+    del(key(id, 'synced'));
+  }
+  const byUid = (uid) => players().find((p) => p.uid === uid) || null;
+  // What was last written to the account, so unchanged data is not written again.
+  function synced(id) { return get(key(id, 'synced'), {}); }
+  function setSynced(id, mark) { set(key(id, 'synced'), mark); }
+
+  // Last family leaderboard fetched, shown when offline.
+  function board() { const b = get(BOARD, []); return Array.isArray(b) ? b : []; }
+  function saveBoard(list) { set(BOARD, list); }
 
   function settings() { return { ...DEFAULT_SETTINGS, ...get(SETTINGS, {}) }; }
   function saveSettings(patch) { const next = { ...settings(), ...patch }; set(SETTINGS, next); return next; }
@@ -131,6 +168,7 @@ export function createProfiles(storage) {
 
   return {
     players, playersByRecent, addPlayer, renamePlayer, removePlayer, current, setCurrent,
-    loadGame, saveGame, scores, qualifies, addScore, best, settings, saveSettings, migrateLegacy,
+    loadGame, saveGame, gameAt, clearGame, scores, qualifies, addScore, best, setScores, settings, saveSettings, migrateLegacy,
+    link, unlink, byUid, synced, setSynced, board, saveBoard,
   };
 }
