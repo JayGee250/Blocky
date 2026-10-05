@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Family Blockblast</title>
+<meta name="description" content="A calm block puzzle for the whole family. Works offline; scores stay on this phone.">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Blockblast">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="format-detection" content="telephone=no">
+<meta name="theme-color" content="#2b4a31">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="app/icons/icon-192.png">
+<link rel="apple-touch-icon" href="app/icons/apple-touch-icon.png">
+<link rel="stylesheet" href="app/app.css">
+</head>
+<body>
+<div class="app">
+  <div class="top">
+    <div class="stat">
+      <span class="label">Level <span id="lvl" class="num">1</span> <span class="levelname" id="lvlname">Meadow</span></span>
+      <div class="levelbar" aria-hidden="true"><i id="lvlbar"></i></div>
+      <span class="hint" id="lvlhint">8 lines to level 2</span>
+    </div>
+    <div class="num score" id="score" aria-live="polite">0</div>
+    <div class="stat right">
+      <button class="who" id="whoBtn" type="button" aria-label="Change player">
+        <span class="name" id="who">Player</span>
+        <span class="label">Best <span class="num" id="best">0</span></span>
+      </button>
+    </div>
+  </div>
+
+  <div class="levels" id="levels" aria-hidden="true"></div>
+  <div class="toast" id="toast" hidden></div>
+  <div class="play"><div class="board" id="board" aria-label="Board, 8 by 8"></div></div>
+  <div class="tray" id="tray"></div>
+
+  <div class="foot">
+    <button id="scoresBtn" type="button">Scores</button>
+    <button id="newBtn" type="button">New game</button>
+    <button id="settingsBtn" type="button">Settings</button>
+  </div>
+</div>
+
+<div class="overlay" id="overlay" hidden>
+  <div class="card" id="card" role="dialog" aria-modal="true"></div>
+</div>
+
+<script type="module" src="app/main.js"></script>
+</body>
+</html>
