@@ -33,9 +33,10 @@ export function difficultyForLevel(level) {
   return { level, tierWeights: { easy, medium, hard }, orders: { min, max }, tightness, candidates: 40 };
 }
 
-// Level rises with lines cleared: one level per LINES_PER_LEVEL lines.
+// Level rises with lines cleared: one level per LINES_PER_LEVEL lines, counted
+// from the level the game started at (games saved before start levels started at 1).
 export const LINES_PER_LEVEL = 8;
 
-export function levelForProgress({ linesCleared }) {
-  return Math.min(MAX_LEVEL, 1 + Math.floor(linesCleared / LINES_PER_LEVEL));
+export function levelForProgress({ linesCleared, startLevel = 1 }) {
+  return Math.min(MAX_LEVEL, startLevel + Math.floor(linesCleared / LINES_PER_LEVEL));
 }

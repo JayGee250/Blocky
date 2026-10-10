@@ -1,9 +1,9 @@
-// Family Blockblast: the game screen, player picker, scores and settings.
+// Family Blockblast: the game screen, player picker, scores, game list and settings.
 // Plain ES modules, no build step. tools/build-play.js inlines this file and
 // its imports into web/play.html for a single-file preview, so keep every
 // import on one line.
 import { newGame, place, trayPieces, canPlaceSlot, isFilled, cloneBoard, FULL_ROW, LINES_PER_LEVEL, MAX_LEVEL } from '../engine/index.js';
-import { createProfiles, MAX_NAME } from './profiles.js';
+import { createProfiles, MAX_NAME, MAX_HISTORY } from './profiles.js';
 import { createFeedback } from './feedback.js';
 import { syncPlayer } from './sync.js';
 import { firebaseConfig } from './firebase-config.js';
@@ -194,13 +194,19 @@ function startAs(id) {
   player = profiles.setCurrent(id);
   const saved = profiles.loadGame(id);
   if (saved) { state = saved.state; boardColors = saved.colors; }
-  else { state = newGame(); boardColors = Array(64).fill(null); save(); }
+  else { state = newGame({ level: profiles.startLevel(id) }); boardColors = Array(64).fill(null); save(); }
   hideCard();
   render();
   sync(id);
 }
 
-function restart() { state = newGame(); boardColors = Array(64).fill(null); save(); hideCard(); render(); }
+// A game in progress that gets replaced stays in the game list as abandoned.
+function restart(level = profiles.startLevel(player.id)) {
+  if (state.moves > 0 && !state.gameOver && state.gid) profiles.abandonGame(player.id, state.gid);
+  state = newGame({ level });
+  boardColors = Array(64).fill(null);
+  save(); hideCard(); render();
+}
 
 // ---------- family accounts ----------
 // Signing in is optional and per player. Play never waits for the network:
@@ -238,7 +244,7 @@ function reloadGame() {
   if (!player || state.gameOver) return;
   const saved = profiles.loadGame(player.id);
   if (saved) { state = saved.state; boardColors = saved.colors; }
-  else { state = newGame(); boardColors = Array(64).fill(null); profiles.saveGame(player.id, state, boardColors); }
+  else { state = newGame({ level: profiles.startLevel(player.id) }); boardColors = Array(64).fill(null); profiles.saveGame(player.id, state, boardColors); }
   render();
 }
 
@@ -388,11 +394,44 @@ function showPicker() {
   on('closeBtn', hideCard);
 }
 
+const levelText = (s) => {
+  const from = s.startLevel || 1;
+  return from === 1 ? `level ${s.level}` : `from level ${from}${s.level > from ? ` to ${s.level}` : ''}`;
+};
+
 function scoresList(list, highlight) {
   if (!list.length) return '<p>No scores yet. Finish a game to get on the list.</p>';
   return '<ol class="scores">' + list.map((s, i) =>
-    `<li class="${i === highlight ? 'me' : ''}"><span class="num">${i + 1}</span><span class="lv">level ${s.level}</span><span class="num">${s.score}</span></li>`
+    `<li class="${i === highlight ? 'me' : ''}"><span class="num">${i + 1}</span><span class="lv">${levelText(s)}</span><span class="num">${s.score}</span></li>`
   ).join('') + '</ol>';
+}
+
+// ---------- start level ----------
+// A new game can start at any level the player has already reached.
+
+let pickedLevel = 1;
+function levelPicker() {
+  pickedLevel = profiles.startLevel(player.id);
+  const top = profiles.reached(player.id);
+  if (top < 2) return '';
+  const buttons = THEMES.map(([h, name], i) => {
+    const n = i + 1, open = n <= top;
+    return `<button type="button" data-lv="${n}" style="--lh:${h}" aria-pressed="${n === pickedLevel}" aria-label="Level ${n}, ${name}${open ? '' : ', locked'}"${open ? '' : ' disabled'}>${n}</button>`;
+  }).join('');
+  return `<h3>Start at level</h3><div class="startlv" id="startLv">${buttons}</div><p class="hint" id="startHint">${startHint(pickedLevel, top)}</p>`;
+}
+const startHint = (n, top) => `${THEMES[n - 1][1]}.${top < MAX_LEVEL ? ` Reach a level in a game to unlock it (up to ${top} so far).` : ''}`;
+function wireLevelPicker() {
+  const el = $('startLv');
+  if (!el) return;
+  el.onclick = (e) => {
+    const b = e.target.closest('button[data-lv]');
+    if (!b || b.disabled) return;
+    pickedLevel = Number(b.dataset.lv);
+    profiles.setStartLevel(player.id, pickedLevel);
+    for (const x of el.children) x.setAttribute('aria-pressed', String(x === b));
+    $('startHint').textContent = startHint(pickedLevel, profiles.reached(player.id));
+  };
 }
 
 function familyBests() {
@@ -411,20 +450,124 @@ function familyBoard() {
     `<li class="${r.uid === me ? 'me' : ''}"><span class="num">${i + 1}</span><span>${esc(r.name)}</span><span class="num">${r.best}</span></li>`).join('')}</ol>`;
 }
 
+// Family members on the account, from the last sync. Shown once anyone on this phone is signed in.
+function familyGames() {
+  if (!cloudOn || !profiles.players().some((p) => p.uid)) return [];
+  const here = new Set(profiles.players().map((p) => p.uid).filter(Boolean));
+  return profiles.family().filter((h) => !here.has(h.uid))
+    .map((h) => ({ key: 'u:' + h.uid, name: h.name, games: (h.games || []).filter((e) => !e.deleted) }));
+}
+
+// Best game per person among games started at `start`.
+function familyBestsFrom(start) {
+  const best = (games) => games.filter((e) => e.status === 'over' && (e.startLevel || 1) === start).reduce((m, e) => Math.max(m, e.score || 0), 0);
+  const list = [
+    ...profiles.players().map((p) => ({ name: p.name, best: profiles.top(p.id, start)[0]?.score || 0, me: p.id === player.id })),
+    ...familyGames().map((h) => ({ name: h.name, best: best(h.games) })),
+  ].filter((r) => r.best).sort((a, b) => b.best - a.best);
+  if (list.length < 2) return '';
+  return `<h3>Family bests from level ${start}</h3><ol class="scores">${list.map((r, i) =>
+    `<li class="${r.me ? 'me' : ''}"><span class="num">${i + 1}</span><span>${esc(r.name)}</span><span class="num">${r.best}</span></li>`).join('')}</ol>`;
+}
+
+// null = every game, otherwise only games started at that level.
+let scoreFilter = null;
 function showScores(highlight = -1) {
   const p = profiles.players().find((x) => x.id === player.id);
   const where = linked(player.id) ? `Backed up to ${esc(p.email)}.` : 'Saved on this phone only.';
-  showCard(`<h2>${esc(player.name)}’s top 10</h2>${scoresList(profiles.scores(player.id), highlight)}
-    ${(linked(player.id) && familyBoard()) || familyBests()}
+  const starts = [...new Set(profiles.scores(player.id).concat(profiles.history(player.id).filter((e) => e.status === 'over')).map((s) => s.startLevel || 1))].sort((a, b) => a - b);
+  if (!starts.includes(scoreFilter)) scoreFilter = null;
+  const chip = (v, label) => `<button type="button" data-start="${v ?? ''}" aria-pressed="${scoreFilter === v}">${label}</button>`;
+  const chips = starts.length > 1 ? `<div class="chips" id="startFilter" aria-label="Started at level">${chip(null, 'All')}${starts.map((n) => chip(n, 'From ' + n)).join('')}</div>` : '';
+  const family = scoreFilter == null ? (linked(player.id) && familyBoard()) || familyBests() : familyBestsFrom(scoreFilter);
+  showCard(`<h2>${esc(player.name)}’s top 10</h2>${chips}
+    ${scoresList(profiles.top(player.id, scoreFilter), scoreFilter == null ? highlight : -1)}
+    ${family}
+    <button type="button" id="historyBtn">All games</button>
     <p class="hint">${where} Every set of three pieces fits in some order; finding it is the game.</p>
     <button type="button" id="closeBtn">Close</button>`, hideCard);
+  $('startFilter')?.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-start]');
+    if (!b) return;
+    scoreFilter = b.dataset.start ? Number(b.dataset.start) : null;
+    showScores(highlight);
+  });
+  on('historyBtn', () => showHistory());
   on('closeBtn', hideCard);
   if (linked(player.id)) refreshCard = () => showScores(highlight);
 }
 
+// ---------- game list ----------
+// Every game: who, when it started and ended, points, levels. Players on this
+// phone, plus the rest of the family once someone here is signed in.
+
+const STATUS_WORD = { over: 'ended', abandoned: 'abandoned', playing: 'in progress' };
+const dayFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+const timeFmt = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
+const sameDay = (a, b) => new Date(a).toDateString() === new Date(b).toDateString();
+const when = (t) => `${dayFmt.format(t)}, ${timeFmt.format(t)}`;
+function gameTimes(e) {
+  if (!e.end) return `${when(e.start)} → now`;
+  return `${when(e.start)} → ${sameDay(e.start, e.end) ? timeFmt.format(e.end) : when(e.end)}`;
+}
+
+let historyWho = null, historyShown = 50;
+function historySources() {
+  return [
+    ...profiles.playersByRecent().map((p) => ({ key: 'p:' + p.id, pid: p.id, name: p.name, games: profiles.history(p.id) })),
+    ...familyGames(),
+  ];
+}
+
+function showHistory() {
+  const sources = historySources();
+  if (!sources.some((s) => s.key === historyWho)) historyWho = null;
+  const rows = sources.filter((s) => historyWho == null || s.key === historyWho)
+    .flatMap((s) => s.games.map((e) => ({ s, e })))
+    .sort((a, b) => b.e.start - a.e.start);
+  const chip = (key, label) => `<button type="button" data-who="${esc(key ?? '')}" aria-pressed="${historyWho === key}">${esc(label)}</button>`;
+  const chips = sources.length > 1 ? `<div class="chips" id="whoFilter" aria-label="Player">${chip(null, 'Everyone')}${sources.map((s) => chip(s.key, s.name)).join('')}</div>` : '';
+  const items = rows.slice(0, historyShown).map(({ s, e }) => `<li>
+      <div class="g-top"><span class="g-name">${esc(s.name)}</span><span class="num">${e.score}</span></div>
+      <div class="g-sub"><span>${gameTimes(e)}<br>${levelText(e)} · ${STATUS_WORD[e.status] || ''}</span>
+        ${s.pid && e.status !== 'playing' ? `<button type="button" class="quiet" data-del="${esc(s.pid)}|${esc(e.id)}" aria-label="Delete this game">Delete</button>` : ''}</div></li>`).join('');
+  const where = familyGames().length ? 'Players on this phone and everyone in the family who is signed in.' : 'Games played on this phone.';
+  showCard(`<h2>All games</h2>${chips}
+    ${rows.length ? `<ol class="games" id="games">${items}</ol>` : '<p>No games yet. A game shows up here once the first piece is placed.</p>'}
+    ${rows.length > historyShown ? '<button type="button" id="moreBtn">Show more</button>' : ''}
+    <p class="hint">${where} Newest first, up to ${MAX_HISTORY} games per player.</p>
+    <button type="button" id="closeBtn">Back</button>`, () => showScores());
+  $('whoFilter')?.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-who]');
+    if (!b) return;
+    historyWho = b.dataset.who || null;
+    historyShown = 50;
+    showHistory();
+  });
+  $('games')?.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-del]');
+    if (b) confirmDelete(...b.dataset.del.split('|'));
+  });
+  on('moreBtn', () => { historyShown += 100; showHistory(); });
+  on('closeBtn', () => showScores());
+  if (profiles.players().some((p) => linked(p.id))) refreshCard = showHistory;
+}
+
+function confirmDelete(pid, gid) {
+  const p = profiles.players().find((x) => x.id === pid);
+  const e = p && profiles.history(pid).find((x) => x.id === gid);
+  if (!e) return showHistory();
+  showCard(`<h2>Delete this game?</h2><p>${esc(p.name)}, ${e.score} points, ${gameTimes(e)}.
+    It is removed from the game list${linked(pid) ? ' on every phone' : ''}. The top 10 stays as it is.</p>
+    <div class="row"><button type="button" id="cancelBtn">Cancel</button><button class="primary" type="button" id="goBtn">Delete</button></div>`, showHistory);
+  on('cancelBtn', showHistory);
+  on('goBtn', () => { profiles.deleteGame(pid, gid); sync(pid); showHistory(); });
+}
+
 function gameOver() {
   feedback.gameOver();
-  const { rank } = profiles.addScore(player.id, { score: state.score, level: state.level });
+  const ended = profiles.history(player.id).find((e) => e.id === state.gid);
+  const { rank } = profiles.addScore(player.id, { score: state.score, level: state.level, startLevel: state.startLevel || 1, gid: state.gid, date: ended?.end || Date.now() });
   sync();
   const left = state.tray.filter((t) => !t.used).length;
   const why = `The ${left === 1 ? 'last piece no longer fits' : `last ${left} pieces no longer fit`} after that move.`;
@@ -432,18 +575,24 @@ function gameOver() {
     : rank >= 0 ? ` That is number ${rank + 1} on your top 10.` : '';
   showCard(`<h2>${state.score} points</h2><p>${why}${note}</p>
     ${rank >= 0 ? scoresList(profiles.scores(player.id), rank) : ''}
+    ${levelPicker()}
     <button class="primary" id="againBtn" type="button">Play again</button>
     ${profiles.players().length > 1 ? '<button type="button" id="otherBtn">Change player</button>' : ''}`);
-  on('againBtn', restart);
-  on('otherBtn', () => { restart(); showPicker(); });
+  wireLevelPicker();
+  on('againBtn', () => restart(pickedLevel));
+  on('otherBtn', () => { restart(pickedLevel); showPicker(); });
 }
 
 function confirmNewGame() {
-  if (state.moves === 0 || state.gameOver) return restart();
-  showCard(`<h2>Start a new game?</h2><p>This game ends and its ${state.score} points are not added to the scores.</p>
-    <div class="row"><button id="keepBtn" type="button">Keep playing</button><button class="primary" id="goBtn" type="button">New game</button></div>`, hideCard);
+  const picker = levelPicker();
+  const playing = state.moves > 0 && !state.gameOver;
+  if (!picker && !playing) return restart(1);
+  showCard(`<h2>${playing ? 'Start a new game?' : 'New game'}</h2>${picker}
+    ${playing ? `<p>This game ends with ${state.score} points. It stays in the game list as abandoned and is not added to the top 10.</p>` : ''}
+    <div class="row"><button id="keepBtn" type="button">${playing ? 'Keep playing' : 'Cancel'}</button><button class="primary" id="goBtn" type="button">New game</button></div>`, hideCard);
+  wireLevelPicker();
   on('keepBtn', hideCard);
-  on('goBtn', restart);
+  on('goBtn', () => restart(pickedLevel));
 }
 
 const sw = (id, label, sub, val) =>

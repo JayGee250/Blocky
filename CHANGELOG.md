@@ -1,5 +1,13 @@
 # Changelog
 
+## Start level and game list (2026-10-10)
+
+- New game and the game over card let a player pick a start level, up to the highest level they have reached. `newGame({ level })` deals that level's pieces from the first round; `state.startLevel` is saved with the game.
+- Every game is kept in a game list (Scores > All games): player, start and end time, points, start level, level reached, and ended / abandoned / in progress. Newest first, filter by player, delete a finished game, up to 500 games per player. A game in progress replaced by a new one is marked abandoned.
+- The top 10 and family bests can be narrowed to games started at one level.
+- Signed-in players' game lists sync through Firestore (`history/{uid}`), and the list shows the whole family. `firestore.rules`: the family can read everyone's list, each person writes only their own (at most 500 games). Needs the rules published again.
+- Tests for start levels, the game list and merging it between phones; `tools/check-app.js` and `tools/check-cloud.js` cover the new screens and rules. Service worker `blockblast-v3`.
+
 ## Thread 4: family accounts with Firebase (2026-10-05)
 
 - Optional sign-in per player (email and password, Firebase Authentication) from Settings > Family account, with create account and forgot password.

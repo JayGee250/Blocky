@@ -3,7 +3,7 @@ import { getPiece } from './pieces.js';
 import { createRng } from './rng.js';
 import { dealRound } from './generator.js';
 import { anyOrderSolvable } from './solver.js';
-import { difficultyForLevel, levelForProgress } from './difficulty.js';
+import { difficultyForLevel, levelForProgress, MAX_LEVEL } from './difficulty.js';
 import { scorePlacement, COMBO_GRACE } from './scoring.js';
 
 // Game state is a plain JSON-serializable object, so the UI can save it to
@@ -13,13 +13,17 @@ import { scorePlacement, COMBO_GRACE } from './scoring.js';
 // the player places a piece so that the remaining pieces of the round can no
 // longer all be placed: picking the order is the challenge.
 
-export function newGame({ seed = Date.now() >>> 0 } = {}) {
+// `level` is the start level (1..MAX_LEVEL): the game deals that level's pieces
+// from the first round, and levels go up from there as lines are cleared.
+export function newGame({ seed = Date.now() >>> 0, level = 1 } = {}) {
+  const startLevel = Math.min(Math.max(Math.floor(level) || 1, 1), MAX_LEVEL);
   const state = {
     board: createBoard(),
     tray: [],              // [{ id, used }]
     score: 0,
     linesCleared: 0,
-    level: 1,
+    level: startLevel,
+    startLevel,
     combo: 0,
     movesSinceClear: 0,
     moves: 0,

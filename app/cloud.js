@@ -35,6 +35,7 @@ export function account(playerId) {
   };
   const userDoc = (x) => x.f.doc(x.db, 'users', x.auth.currentUser.uid);
   const rowDoc = (x) => x.f.doc(x.db, 'leaderboard', x.auth.currentUser.uid);
+  const historyDoc = (x) => x.f.doc(x.db, 'history', x.auth.currentUser.uid);
   const who = (u) => (u ? { uid: u.uid, email: u.email } : null);
   return {
     async user() { return who((await me()).auth.currentUser); },
@@ -45,6 +46,13 @@ export function account(playerId) {
     async pull() { const x = await me(); const snap = await x.f.getDoc(userDoc(x)); return snap.exists() ? snap.data() : null; },
     async push(doc) { const x = await me(); await x.f.setDoc(userDoc(x), { ...doc, updatedAt: Date.now() }); },
     async pushRow(row) { const x = await me(); await x.f.setDoc(rowDoc(x), { ...row, updatedAt: Date.now() }); },
+    async pushHistory(h) { const x = await me(); await x.f.setDoc(historyDoc(x), { ...h, updatedAt: Date.now() }); },
+    // Every family member's game history: [{ uid, name, games }].
+    async histories() {
+      const x = await me();
+      const snap = await x.f.getDocs(x.f.collection(x.db, 'history'));
+      return snap.docs.map((d) => ({ uid: d.id, name: d.get('name'), games: d.get('games') || [] }));
+    },
     async board() {
       const x = await me();
       const snap = await x.f.getDocs(x.f.query(x.f.collection(x.db, 'leaderboard'), x.f.orderBy('best', 'desc'), x.f.limit(50)));

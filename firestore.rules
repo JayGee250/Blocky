@@ -10,8 +10,8 @@ rules_version = '2';
 //   (collection "family", one document per email, added by hand in the console).
 //   Anyone on the internet can create an account, but only family members get in.
 // - Each family member can read and write only their own backup (users/{their id}).
-// - Every family member can read the family leaderboard, but can only write
-//   their own row on it.
+// - Every family member can read the family leaderboard and everyone's list of
+//   games played, but can only write their own row and their own list.
 // - The family list itself can only be changed in the console.
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -64,6 +64,18 @@ service cloud.firestore {
         && request.resource.data.best is int && request.resource.data.best >= 0 && request.resource.data.best < 100000000
         && request.resource.data.level is int && request.resource.data.level >= 1 && request.resource.data.level <= 10
         && request.resource.data.date is number
+        && request.resource.data.updatedAt is number;
+      allow delete: if isFamily() && isMe(uid);
+    }
+
+    // Every game one person played (start, end, points, levels), at most 500.
+    // The whole family can read it, so the game list shows everyone.
+    match /history/{uid} {
+      allow read: if isFamily();
+      allow create, update: if isFamily() && isMe(uid)
+        && request.resource.data.keys().hasOnly(['name', 'games', 'updatedAt'])
+        && isName(request.resource.data.name)
+        && request.resource.data.games is list && request.resource.data.games.size() <= 500
         && request.resource.data.updatedAt is number;
       allow delete: if isFamily() && isMe(uid);
     }

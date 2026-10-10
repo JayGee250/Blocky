@@ -78,6 +78,19 @@ await denied(setDoc(doc(mum.db, 'users', mum.uid), { ...userDoc, name: 'x'.repea
 await denied(setDoc(doc(mum.db, 'users', mum.uid), { ...userDoc, game: 'x'.repeat(30000) }), 'an oversized saved game');
 await denied(setDoc(doc(stranger.db, 'family', 'stranger@example.com'), { name: 'me' }), 'adding yourself to the family list');
 await denied(getDoc(doc(mum.db, 'family', 'kid@example.com')), 'reading someone else\'s family entry');
+
+const game = { id: 'g1', start: 1, end: 2, score: 10, startLevel: 2, level: 3, status: 'over', at: 2 };
+const hist = { name: 'Mum', games: [game], updatedAt: 1 };
+await setDoc(doc(mum.db, 'history', mum.uid), hist);
+await setDoc(doc(kid.db, 'history', kid.uid), { ...hist, name: 'Kid' });
+assert.equal((await getDocs(collection(kid.db, 'history'))).size, 2);
+console.log('  allowed: family write own game list, read everyone\'s');
+await denied(getDocs(collection(anonDb, 'history')), 'signed out reads the game lists');
+await denied(getDocs(collection(stranger.db, 'history')), 'non-family reads the game lists');
+await denied(setDoc(doc(stranger.db, 'history', stranger.uid), hist), 'non-family writes a game list');
+await denied(setDoc(doc(kid.db, 'history', mum.uid), hist), 'family writes someone else\'s game list');
+await denied(setDoc(doc(mum.db, 'history', mum.uid), { ...hist, admin: true }), 'extra fields on a game list');
+await denied(setDoc(doc(mum.db, 'history', mum.uid), { ...hist, games: Array(501).fill(game) }), 'more than 500 games');
 for (const p of [mum, kid, stranger]) await deleteApp(p.app);
 await deleteApp(anon);
 
@@ -115,14 +128,21 @@ async function addPlayer(page, name) {
   await page.click('#addForm button[type=submit]');
   await page.waitForSelector('#overlay', { state: 'hidden' });
 }
+// Drags tray pieces onto the board until one lands.
 async function placeOne(page) {
-  const slot = await page.locator('.slot').first().boundingBox();
   const board = await page.locator('#board').boundingBox();
-  const from = [slot.x + slot.width / 2, slot.y + slot.height / 2], to = [board.x + board.width / 2, board.y + board.height / 2 + 70];
-  await page.mouse.move(...from);
-  await page.mouse.down();
-  for (let i = 1; i <= 10; i++) await page.mouse.move(from[0] + (to[0] - from[0]) * i / 10, from[1] + (to[1] - from[1]) * i / 10);
-  await page.mouse.up();
+  const before = await page.locator('.cell.f').count();
+  for (let n = 0; n < 3; n++) for (const [dx, dy] of [[0, 0], [-0.25, -0.25], [0.25, 0.25], [-0.25, 0.25], [0.25, -0.25]]) {
+    const slot = await page.locator('.slot').nth(n).boundingBox();
+    const from = [slot.x + slot.width / 2, slot.y + slot.height / 2];
+    const to = [board.x + board.width * (0.5 + dx), board.y + board.height * (0.5 + dy) + 70];
+    await page.mouse.move(...from);
+    await page.mouse.down();
+    for (let i = 1; i <= 10; i++) await page.mouse.move(from[0] + (to[0] - from[0]) * i / 10, from[1] + (to[1] - from[1]) * i / 10);
+    await page.mouse.up();
+    if (await page.locator('.cell.f').count() !== before) return;
+  }
+  throw new Error('no piece could be placed');
 }
 async function signIn(page, email, create) {
   await page.click('#settingsBtn');
@@ -169,6 +189,31 @@ await two.page.screenshot({ path: out + 'cloud-scores.png' });
 const top = await two.page.locator('ol.scores').first().locator('li').first().textContent();
 assert.match(top, /321/);
 console.log('  phone 2 resumed the same game (score', score1 + ') and shows the leaderboard');
+// The game list shows that one game once, still in progress.
+await two.page.click('#historyBtn');
+await two.page.waitForSelector('#games li');
+// (Mum and Kid are family members from the rules check above.)
+const games2 = (await two.page.locator('#games li').allTextContents()).filter((t) => t.includes('Mia'));
+assert.equal(games2.length, 1);
+assert.match(games2[0], /in progress/);
+await two.page.click('#closeBtn');
+
+// Phone 3: Dad has his own account and sees Mia's games in the family game list.
+await addFamily('dad@example.com');
+const three = await phone('phone3');
+await addPlayer(three.page, 'Dad');
+await placeOne(three.page);
+await signIn(three.page, 'dad@example.com', true);
+await waitStatus(three.page, 'backed up');
+await three.page.click('#closeBtn');
+await three.page.click('#scoresBtn');
+await three.page.click('#historyBtn');
+await three.page.waitForSelector('#whoFilter');
+const names3 = (await three.page.locator('#games .g-name').allTextContents()).sort();
+assert.deepEqual(names3, ['Dad', 'Kid', 'Mia', 'Mum']);
+await three.page.screenshot({ path: out + 'cloud-history.png' });
+console.log('  phone 3 (Dad) sees the family game list:', names3.join(', '));
+await three.ctx.close();
 
 // Someone not on the family list can sign up but sees nothing shared.
 await two.page.click('#closeBtn');

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createProfiles } from '../app/profiles.js';
-import { mergeScores, remoteGameWins, syncPlayer, statusFor } from '../app/sync.js';
+import { mergeScores, mergeHistory, remoteGameWins, syncPlayer, statusFor } from '../app/sync.js';
 import { newGame, place, canPlaceSlot } from '../engine/index.js';
 
 function memoryStorage() {
@@ -10,7 +10,8 @@ function memoryStorage() {
 }
 
 // Stands in for cloud.js: one account's documents, kept in memory.
-function fakeAccount(uid, cloud = { users: {}, board: {} }) {
+function fakeAccount(uid, cloud = { users: {}, board: {}, history: {} }) {
+  cloud.history ||= {};
   const writes = [];
   return {
     cloud, writes,
@@ -19,6 +20,8 @@ function fakeAccount(uid, cloud = { users: {}, board: {} }) {
     push: async (doc) => { writes.push('doc'); cloud.users[uid] = structuredClone(doc); },
     pushRow: async (row) => { writes.push('row'); cloud.board[uid] = { uid, ...row }; },
     board: async () => Object.values(cloud.board).sort((a, b) => b.best - a.best),
+    pushHistory: async (h) => { writes.push('history'); cloud.history[uid] = structuredClone(h); },
+    histories: async () => Object.entries(cloud.history).map(([id, h]) => ({ uid: id, ...structuredClone(h) })),
   };
 }
 
@@ -69,7 +72,7 @@ test('first sign-in merges local scores into the account and backs up the game',
 });
 
 test('a new phone picks up the game in progress, and a finished game clears it', async () => {
-  const cloud = { users: {}, board: {} };
+  const cloud = { users: {}, board: {}, history: {} };
   const phoneA = createProfiles(memoryStorage()), phoneB = createProfiles(memoryStorage());
   const a = phoneA.addPlayer('Tom'), b = phoneB.addPlayer('Tom');
   phoneA.link(a.id, { uid: 'u2', email: 't@example.com' });
@@ -129,4 +132,66 @@ test('an untouched new game keeps the old save time', () => {
   assert.equal(pr.gameAt(p.id), 1234);
   pr.saveGame(p.id, playedGame(5), Array(64).fill(null));
   assert.ok(pr.gameAt(p.id) > 1234);
+});
+
+test('histories merge per game: deleted beats ended beats playing, then the newer change', () => {
+  const e = (id, status, at, extra = {}) => ({ id, start: 10, end: status === 'playing' ? null : at, score: at, startLevel: 1, level: 1, status, at, ...extra });
+  const merged = mergeHistory([e('a', 'playing', 5), e('b', 'over', 3), e('c', 'over', 1)], [e('a', 'over', 4), e('b', 'over', 9), e('c', 'over', 0, { deleted: true }), null, { id: 7 }]);
+  const by = Object.fromEntries(merged.map((x) => [x.id, x]));
+  assert.equal(by.a.status, 'over');
+  assert.equal(by.b.at, 9);
+  assert.equal(by.c.deleted, true);
+  assert.equal(merged.length, 3);
+});
+
+test('games, endings and deletions reach every phone, and the family sees each other', async () => {
+  const cloud = { users: {}, board: {}, history: {} };
+  const phoneA = createProfiles(memoryStorage()), phoneB = createProfiles(memoryStorage());
+  const a = phoneA.addPlayer('Tom'), b = phoneB.addPlayer('Tom');
+  phoneA.link(a.id, { uid: 'u2', email: 't@example.com' });
+  phoneB.link(b.id, { uid: 'u2', email: 't@example.com' });
+  cloud.history.mum = { name: 'Mum', games: [{ id: 'm1', start: 1, end: 2, score: 77, startLevel: 2, level: 3, status: 'over', at: 2 }] };
+
+  const game = playedGame(11);
+  phoneA.saveGame(a.id, game, Array(64).fill(null));
+  await syncPlayer(phoneA, fakeAccount('u2', cloud), a.id);
+  assert.equal(cloud.history.u2.games[0].status, 'playing');
+  assert.equal(cloud.history.u2.name, 'Tom');
+  assert.deepEqual(phoneA.family().map((h) => h.name).sort(), ['Mum', 'Tom']);
+
+  // Phone B picks up the same game and finishes it.
+  await syncPlayer(phoneB, fakeAccount('u2', cloud), b.id);
+  const done = { ...phoneB.loadGame(b.id).state, gameOver: true };
+  phoneB.saveGame(b.id, done, Array(64).fill(null), phoneB.gameAt(b.id) + 1);
+  await syncPlayer(phoneB, fakeAccount('u2', cloud), b.id);
+  await syncPlayer(phoneA, fakeAccount('u2', cloud), a.id);
+  assert.deepEqual(phoneA.history(a.id).map((x) => [x.id, x.status]), [[game.gid, 'over']], 'one game, ended, not abandoned');
+
+  // Phone A deletes it; phone B drops it too.
+  phoneA.deleteGame(a.id, game.gid);
+  await syncPlayer(phoneA, fakeAccount('u2', cloud), a.id);
+  await syncPlayer(phoneB, fakeAccount('u2', cloud), b.id);
+  assert.deepEqual(phoneB.history(b.id), []);
+
+  // Nothing changed, so another sync writes nothing.
+  const acct = fakeAccount('u2', cloud);
+  await syncPlayer(phoneB, acct, b.id);
+  assert.deepEqual(acct.writes, []);
+});
+
+test('a game in progress replaced by a newer one from another phone counts as abandoned', async () => {
+  const cloud = { users: {}, board: {}, history: {} };
+  const phoneA = createProfiles(memoryStorage()), phoneB = createProfiles(memoryStorage());
+  const a = phoneA.addPlayer('Ida'), b = phoneB.addPlayer('Ida');
+  phoneA.link(a.id, { uid: 'u5', email: 'i@example.com' });
+  phoneB.link(b.id, { uid: 'u5', email: 'i@example.com' });
+  const first = playedGame(21);
+  phoneA.saveGame(a.id, first, Array(64).fill(null), 100);
+  const second = playedGame(22);
+  phoneB.saveGame(b.id, second, Array(64).fill(null), 200);
+  await syncPlayer(phoneB, fakeAccount('u5', cloud), b.id);
+  const res = await syncPlayer(phoneA, fakeAccount('u5', cloud), a.id);
+  assert.equal(res.gameChanged, true);
+  const by = Object.fromEntries(phoneA.history(a.id).map((x) => [x.id, x.status]));
+  assert.deepEqual(by, { [first.gid]: 'abandoned', [second.gid]: 'playing' });
 });

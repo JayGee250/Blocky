@@ -180,3 +180,27 @@ ol.scores .lv { color: var(--muted); font-size: 13px; }
   body, body::before, .cell, .board, .slot, .toast, .switch::after { transition: none; }
 }
 @media (max-width: 340px) { .foot button { font-size: 13px; } }
+
+/* Filter chips (start level on the scores card, player on the game list): one row that scrolls sideways. */
+.chips { display: flex; gap: 6px; overflow-x: auto; margin: 0 -4px; padding: 2px 4px; touch-action: pan-x pan-y; scrollbar-width: none; }
+.chips::-webkit-scrollbar { display: none; }
+.chips button { flex: none; min-height: 36px; padding: 6px 12px; border-radius: 18px; font-size: 14px; background: var(--bg); border-color: transparent; }
+.chips button[aria-pressed="true"] { background: var(--accent); color: var(--bg); }
+
+/* Start level picker: one swatch per level in that level's color; locked levels are faded. */
+.startlv { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.startlv button {
+  min-height: 44px; padding: 0; font: 600 17px var(--display); color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.35);
+  background: hsl(var(--lh) 62% 46%); border: 0;
+}
+.startlv button[aria-pressed="true"] { outline: 3px solid var(--ink); outline-offset: 2px; }
+.startlv button:disabled { opacity: .25; cursor: default; }
+
+/* Game list: name and points on top, times and levels underneath. */
+ol.games { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+ol.games li { padding: 8px 0; border-top: 1px solid color-mix(in srgb, var(--muted) 25%, transparent); }
+ol.games li:first-child { border-top: 0; }
+.g-top { display: flex; justify-content: space-between; gap: 10px; font-weight: 600; }
+.g-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g-sub { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); line-height: 1.4; }
+.g-sub button { min-height: 36px; padding: 4px 6px; font-size: 13px; flex: none; }
