@@ -4,7 +4,7 @@ A calm block puzzle for the family, built as a Home Screen app for iPhone. Plain
 
 ## Add it to an iPhone
 
-The app is published at **https://jaygee250.github.io/blockblast/** (GitHub Pages, from the `main` branch).
+The app is published at **https://jaygee250.github.io/Blocky/** (GitHub Pages, from the `main` branch).
 
 1. Open that address in **Safari** on the iPhone (not Chrome or another app's browser).
 2. Tap the **Share** button (the square with an arrow pointing up).
