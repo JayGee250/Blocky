@@ -151,3 +151,15 @@ test('game ends when a placement strands the rest of the round', () => {
   assert.equal(res.gameOver, true);
   assert.equal(place(state, 0, 0, 3).ok, false);
 });
+
+test('a game can start at a higher level and climbs from there', () => {
+  const g = newGame({ seed: 3, level: 4 });
+  assert.equal(g.level, 4);
+  assert.equal(g.startLevel, 4);
+  assert.equal(levelForProgress({ linesCleared: 7, startLevel: 4 }), 4);
+  assert.equal(levelForProgress({ linesCleared: 8, startLevel: 4 }), 5);
+  assert.equal(levelForProgress({ linesCleared: 1000, startLevel: 4 }), 10);
+  assert.equal(newGame({ level: 99 }).level, 10);
+  assert.equal(newGame({ level: 0 }).level, 1);
+  assert.equal(newGame().startLevel, 1);
+});

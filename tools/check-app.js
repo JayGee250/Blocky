@@ -1,5 +1,6 @@
 // Plays the app in phone-sized Chromium: add players, drag a piece, switch
-// players, then reload offline through the service worker. Dev only; needs
+// players, reload offline through the service worker, then pick a start level,
+// abandon a game and use the game list. Dev only; needs
 // Playwright. Screenshots go to the folder given (default: your temp folder).
 //   node tools/check-app.js [screenshot-folder]
 import { createServer } from 'node:http';
@@ -66,8 +67,74 @@ async function run(devName, tag) {
   console.log(tag, dims);
   await ctx.close();
 }
+// Drags tray pieces onto the board until one lands.
+async function placeOne(page) {
+  const board = await page.locator('#board').boundingBox();
+  const before = await page.locator('.cell.f').count();
+  for (let slotIndex = 0; slotIndex < 3; slotIndex++) for (const [dx, dy] of [[0, 0], [-0.25, -0.25], [0.25, 0.25], [-0.25, 0.25], [0.25, -0.25]]) {
+    const slot = await page.locator('.slot').nth(slotIndex).boundingBox();
+    const from = [slot.x + slot.width / 2, slot.y + slot.height / 2];
+    const to = [board.x + board.width * (0.5 + dx), board.y + board.height * (0.5 + dy) + 70];
+    await page.mouse.move(...from);
+    await page.mouse.down();
+    for (let i = 1; i <= 10; i++) await page.mouse.move(from[0] + (to[0] - from[0]) * i / 10, from[1] + (to[1] - from[1]) * i / 10);
+    await page.mouse.up();
+    if (await page.locator('.cell.f').count() !== before) return;
+  }
+  throw new Error('no piece could be placed');
+}
+
+async function levels() {
+  const ctx = await browser.newContext({ ...devices['iPhone 15'] });
+  const page = await ctx.newPage();
+  page.on('pageerror', (e) => errors.push('levels: ' + e.message));
+  await page.goto('http://localhost:8181/');
+  await page.fill('#nameIn', 'Mia');
+  await page.click('#addForm button[type=submit]');
+  // Mia has reached level 4 before: levels 1-4 are open.
+  await page.evaluate(() => {
+    const id = JSON.parse(localStorage.getItem('bb-current'));
+    localStorage.setItem(`bb-p-${id}-scores`, JSON.stringify([{ score: 400, level: 4, date: 5 }]));
+  });
+  await page.reload();
+  await page.waitForSelector('.slot');
+  await page.click('#newBtn');
+  await page.waitForSelector('#startLv');
+  const open = await page.locator('#startLv button:not([disabled])').count();
+  if (open !== 4) throw new Error('expected 4 open start levels, got ' + open);
+  await page.click('#startLv button[data-lv="3"]');
+  await page.screenshot({ path: out + 'levels-pick.png' });
+  await page.click('#goBtn');
+  if (await page.textContent('#lvl') !== '3') throw new Error('did not start at level 3');
+  console.log('levels: started at level', await page.textContent('#lvl'), await page.textContent('#lvlname'));
+
+  // Play a move, then replace the game: it is listed as abandoned.
+  await placeOne(page);
+  await page.click('#newBtn');
+  await page.waitForSelector('text=abandoned');
+  await page.click('#startLv button[data-lv="1"]');
+  await page.click('#goBtn');
+  await placeOne(page);
+  await page.click('#scoresBtn');
+  await page.waitForSelector('#historyBtn');
+  await page.screenshot({ path: out + 'levels-scores.png' });
+  await page.click('#historyBtn');
+  await page.waitForSelector('#games li');
+  const rows = (await page.locator('#games li').allTextContents()).map((t) => t.replace(/\s+/g, ' ').trim());
+  console.log('levels: game list', rows);
+  if (rows.length !== 2 || !rows[0].includes('in progress') || !rows[1].includes('abandoned') || !rows[1].includes('from level 3')) throw new Error('unexpected game list');
+  await page.screenshot({ path: out + 'levels-history.png' });
+  await page.click('#games button[data-del]');
+  await page.click('#goBtn');
+  await page.waitForSelector('#games li');
+  if (await page.locator('#games li').count() !== 1) throw new Error('delete did not remove the game');
+  console.log('levels: deleted the abandoned game');
+  await ctx.close();
+}
+
 await run('iPhone SE', 'se');
 await run('iPhone 15', 'i15');
+await levels();
 await browser.close();
 server.close();
 console.log(errors.length ? errors : 'no page errors');
