@@ -2,17 +2,17 @@
 // Firebase; they are not secrets and are safe in a public repository. What
 // keeps the data private is firestore.rules.
 //
-// To fill in apiKey and appId: Firebase console > Bloxx > gear icon >
+// Where apiKey and appId come from: Firebase console > Bloxx > gear icon >
 // Project settings > General > Your apps > the Web app (</>) > SDK setup and
-// configuration > Config. Copy the two values over the placeholders below.
+// configuration > Config.
 // While apiKey is still the placeholder, the app stays local only and hides sign-in.
 export const firebaseConfig = {
-  apiKey: 'PASTE_API_KEY',
+  apiKey: 'AIzaSyA39A__g_hut-560VuXqQseJmpsg3Vw7ts',
   authDomain: 'bloxx-6d09c.firebaseapp.com',
   projectId: 'bloxx-6d09c',
   storageBucket: 'bloxx-6d09c.firebasestorage.app',
   messagingSenderId: '627449600841',
-  appId: 'PASTE_APP_ID',
+  appId: '1:627449600841:web:3d24c1837e40ef01c1d898',
 };
 
 // Firebase web SDK version, loaded from Google's CDN only when someone signs in.
