@@ -21,7 +21,7 @@ export function dealRound(rows, rng, difficulty, count = 3) {
 
   for (let i = 0; i < difficulty.candidates && inBandSeen < compare; i++) {
     const pieces = Array.from({ length: count }, () => rng.weighted(pool));
-    const { solvableCount, total } = analyzeOrders(rows, pieces);
+    const { solvableCount, total } = analyzeOrders(rows, pieces, difficulty.mode);
     if (solvableCount === 0) continue;
 
     // Orders are counted out of 6; scale the band if count differs.
@@ -35,7 +35,7 @@ export function dealRound(rows, rng, difficulty, count = 3) {
     if (!best || cost < best.cost) best = { pieces, solvableCount, total, cost, inBand: distance === 0 };
   }
 
-  if (!best) best = fallbackRound(rows, rng, count);
+  if (!best) best = fallbackRound(rows, rng, count, difficulty.mode);
   return { pieces: best.pieces, solvableOrders: best.solvableCount, totalOrders: best.total, inBand: !!best.inBand };
 }
 
@@ -61,13 +61,13 @@ function spotsAvailable(rows, pieces) {
 // Used when random sampling found nothing solvable (a very crowded board).
 // Tries the smallest pieces first; three single dots always work because the
 // board can never be completely full.
-function fallbackRound(rows, rng, count) {
+function fallbackRound(rows, rng, count, mode) {
   const fitting = PIECES.filter((p) => fitsAnywhere(rows, p)).sort((a, b) => a.size - b.size || rng.next() - 0.5);
   const small = fitting.slice(0, 8);
   for (let attempt = 0; attempt < 60; attempt++) {
     const pieces = Array.from({ length: count }, () => small[rng.int(small.length)]);
-    if (anyOrderSolvable(rows, pieces)) {
-      const { solvableCount, total } = analyzeOrders(rows, pieces);
+    if (anyOrderSolvable(rows, pieces, mode)) {
+      const { solvableCount, total } = analyzeOrders(rows, pieces, mode);
       return { pieces, solvableCount, total };
     }
   }

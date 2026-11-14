@@ -1,4 +1,4 @@
-import { createBoard, canPlace, placeAndClear, isEmpty } from './board.js';
+import { createBoard, canPlace, placeAndClear, isEmpty, MODES } from './board.js';
 import { getPiece } from './pieces.js';
 import { createRng } from './rng.js';
 import { dealRound } from './generator.js';
@@ -15,9 +15,14 @@ import { scorePlacement, COMBO_GRACE } from './scoring.js';
 
 // `level` is the start level (1..MAX_LEVEL): the game deals that level's pieces
 // from the first round, and levels go up from there as lines are cleared.
-export function newGame({ seed = Date.now() >>> 0, level = 1 } = {}) {
+// `mode` is classic, slide or gravity (see board.js). Saved games from before
+// modes existed have no mode and play as classic.
+export const modeOf = (state) => (MODES.includes(state?.mode) ? state.mode : 'classic');
+
+export function newGame({ seed = Date.now() >>> 0, level = 1, mode = 'classic' } = {}) {
   const startLevel = Math.min(Math.max(Math.floor(level) || 1, 1), MAX_LEVEL);
   const state = {
+    mode: MODES.includes(mode) ? mode : 'classic',
     board: createBoard(),
     tray: [],              // [{ id, used }]
     score: 0,
@@ -45,21 +50,25 @@ export function canPlaceSlot(state, slot, r, c) {
 }
 
 // Place tray piece `slot` with its top-left corner at (r, c).
-// Returns { ok, points, clearedRows, clearedCols, boardCleared, dealt, levelUp, gameOver }.
+// Returns { ok, points, clearedRows, clearedCols, steps, lines, boardCleared, dealt, levelUp, gameOver }.
+// `steps` lists each clear with its map of where every block moved (board.js);
+// classic and slide have at most one step, gravity one per link of the chain.
 export function place(state, slot, r, c) {
   if (!canPlaceSlot(state, slot, r, c)) return { ok: false };
   const piece = getPiece(state.tray[slot].id);
-  const { clearedRows, clearedCols } = placeAndClear(state.board, piece, r, c);
+  const mode = modeOf(state);
+  const { clearedRows, clearedCols, steps } = placeAndClear(state.board, piece, r, c, mode, true);
   state.tray[slot].used = true;
   state.moves++;
 
-  const lines = clearedRows.length + clearedCols.length;
+  const chain = steps.map((s) => s.clearedRows.length + s.clearedCols.length);
+  const lines = chain.reduce((a, b) => a + b, 0);
   const boardCleared = lines > 0 && isEmpty(state.board);
-  const points = scorePlacement({ cells: piece.size, lines, combo: lines ? state.combo : 0, boardCleared });
+  const points = scorePlacement({ cells: piece.size, lines, combo: lines ? state.combo : 0, boardCleared, chain });
   state.score += points;
   state.linesCleared += lines;
   if (lines) {
-    state.combo++;
+    state.combo += steps.length;
     state.movesSinceClear = 0;
   } else if (++state.movesSinceClear >= COMBO_GRACE) {
     state.combo = 0;
@@ -73,16 +82,16 @@ export function place(state, slot, r, c) {
   if (remaining.length === 0) {
     deal(state);
     dealt = true;
-  } else if (!anyOrderSolvable(state.board, remaining)) {
+  } else if (!anyOrderSolvable(state.board, remaining, mode)) {
     state.gameOver = true;
   }
 
-  return { ok: true, points, clearedRows, clearedCols, boardCleared, dealt, levelUp: state.level > oldLevel, gameOver: state.gameOver };
+  return { ok: true, points, clearedRows, clearedCols, steps, lines, boardCleared, dealt, levelUp: state.level > oldLevel, gameOver: state.gameOver };
 }
 
 function deal(state) {
   const rng = createRng(state.rngState);
-  const round = dealRound(state.board, rng, difficultyForLevel(state.level));
+  const round = dealRound(state.board, rng, difficultyForLevel(state.level, modeOf(state)));
   state.rngState = rng.state;
   state.tray = round.pieces.map((p) => ({ id: p.id, used: false }));
   state.rounds++;

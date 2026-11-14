@@ -1,5 +1,5 @@
 // Measures the difficulty curve with bots that play roughly like people.
-//   node tools/curve.js [games=40] [profiles=all]
+//   node tools/curve.js [games=40] [profiles=all] [mode=classic]
 //
 // Part 1 pins the game at each level and reports the chance of losing per
 // round and the median rounds survived (capped at CAP rounds).
@@ -30,7 +30,7 @@ function filled(b, r, c) {
 
 // Higher is better: lines cleared, contact with walls and filled cells,
 // minus empty cells left boxed in on all four sides.
-function moveValue(board, piece, r, c) {
+function moveValue(board, piece, r, c, mode) {
   let contact = 0;
   for (const [dr, dc] of piece.cells) {
     const y = r + dr, x = c + dc;
@@ -39,12 +39,13 @@ function moveValue(board, piece, r, c) {
     }
   }
   const b = cloneBoard(board);
-  const { clearedRows, clearedCols } = placeAndClear(b, piece, r, c);
+  const { steps } = placeAndClear(b, piece, r, c, mode);
+  const lines = steps.reduce((n, s) => n + s.clearedRows.length + s.clearedCols.length, 0);
   let isolated = 0;
   for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
     if (!filled(b, y, x) && filled(b, y - 1, x) && filled(b, y + 1, x) && filled(b, y, x - 1) && filled(b, y, x + 1)) isolated++;
   }
-  return { value: 10 * (clearedRows.length + clearedCols.length) + contact - 5 * isolated, board: b };
+  return { value: 10 * lines + contact - 5 * isolated, board: b };
 }
 
 export function botMove(state, profile, rng) {
@@ -55,24 +56,24 @@ export function botMove(state, profile, rng) {
     if (t.used) return;
     const rest = tray.filter((u, i) => !u.used && i !== slot).map((u) => u.piece);
     for (const [r, c] of placements(state.board, t.piece)) {
-      const m = moveValue(state.board, t.piece, r, c);
+      const m = moveValue(state.board, t.piece, r, c, state.mode);
       const v = m.value + rng.next() * profile.noise;
       const move = { slot, r, c, v };
       if (!best || v > best.v) best = move;
-      if (thinks && (!bestSafe || v > bestSafe.v) && (!rest.length || anyOrderSolvable(m.board, rest))) bestSafe = move;
+      if (thinks && (!bestSafe || v > bestSafe.v) && (!rest.length || anyOrderSolvable(m.board, rest, state.mode))) bestSafe = move;
     }
   });
   return bestSafe || best;
 }
 
 // Plays one game pinned at `level`; returns rounds completed before losing (or CAP).
-function pinnedGame(level, profile, seed) {
+function pinnedGame(level, profile, seed, mode) {
   const rng = createRng(seed ^ 0x9e3779b9);
-  const state = newGame({ seed });
+  const state = newGame({ seed, mode });
   const base = (level - 1) * LINES_PER_LEVEL;
   const pin = () => { state.linesCleared = base; state.level = level; };
   pin();
-  const first = dealRound(state.board, createRng(seed), difficultyForLevel(level));
+  const first = dealRound(state.board, createRng(seed), difficultyForLevel(level, mode));
   state.tray = first.pieces.map((p) => ({ id: p.id, used: false }));
   state.rounds = 1;
   while (!state.gameOver && state.rounds <= CAP) {
@@ -87,13 +88,14 @@ const median = (xs) => { const s = [...xs].sort((a, b) => a - b); return s[Math.
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const games = Number(process.argv[2] || 40);
-  const names = process.argv[3] ? process.argv[3].split(',') : Object.keys(PROFILES);
+  const names = process.argv[3] && process.argv[3] !== 'all' ? process.argv[3].split(',') : Object.keys(PROFILES);
+  const mode = process.argv[4] || 'classic';
 
-  console.log(`Pinned levels, ${games} games each. Cell = loss chance per round / median rounds survived (cap ${CAP})`);
+  console.log(`Mode ${mode}. Pinned levels, ${games} games each. Cell = loss chance per round / median rounds survived (cap ${CAP})`);
   console.log('level  ' + names.map((n) => n.padStart(14)).join(''));
   for (let level = 1; level <= MAX_LEVEL; level++) {
     const cells = names.map((n) => {
-      const runs = Array.from({ length: games }, (_, g) => pinnedGame(level, PROFILES[n], 5000 + g));
+      const runs = Array.from({ length: games }, (_, g) => pinnedGame(level, PROFILES[n], 5000 + g, mode));
       const deaths = runs.filter((x) => x < CAP).length;
       const rounds = runs.reduce((a, b) => a + b, 0) + deaths;
       return `${(100 * deaths / rounds).toFixed(1)}% / ${median(runs)}`.padStart(14);
@@ -106,7 +108,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   for (const n of names) {
     const res = Array.from({ length: games }, (_, g) => {
       const rng = createRng((9000 + g) ^ 0x9e3779b9);
-      const state = newGame({ seed: 9000 + g });
+      const state = newGame({ seed: 9000 + g, mode });
       while (!state.gameOver && state.rounds < 400) {
         const m = botMove(state, PROFILES[n], rng);
         place(state, m.slot, m.r, m.c);

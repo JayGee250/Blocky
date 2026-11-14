@@ -28,9 +28,15 @@ const LEVELS = [
   [15, 40, 45, 1, 2, 0.6],  // 10
 ];
 
-export function difficultyForLevel(level) {
+// `mode` (classic, slide or gravity, see board.js) is passed on to the
+// generator, which checks solvability with that mode's rules.
+// All modes share this table. Measured with tools/curve.js (README): slide
+// plays somewhat harder than classic. Gravity tidies the board by itself
+// (blocks fill holes, falls clear more lines) and stays very forgiving even
+// with only hard pieces and a one-order band, so it is the relaxed mode.
+export function difficultyForLevel(level, mode = 'classic') {
   const [easy, medium, hard, min, max, tightness] = LEVELS[Math.min(Math.max(level, 1), MAX_LEVEL) - 1];
-  return { level, tierWeights: { easy, medium, hard }, orders: { min, max }, tightness, candidates: 40 };
+  return { level, mode, tierWeights: { easy, medium, hard }, orders: { min, max }, tightness, candidates: 40 };
 }
 
 // Level rises with lines cleared: one level per LINES_PER_LEVEL lines, counted

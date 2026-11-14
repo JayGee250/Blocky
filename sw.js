@@ -1,7 +1,7 @@
 // Offline support: keeps a copy of every file the app needs, so it opens and
 // plays with no connection. Change VERSION whenever any of these files change;
 // phones pick up the new copy the next time the app opens online.
-const VERSION = 'blockblast-v4';
+const VERSION = 'blockblast-v5';
 const FILES = [
   './',
   'index.html',

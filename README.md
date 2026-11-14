@@ -53,13 +53,13 @@ The config values are identifiers, not secrets: they are meant to be in the app.
 - `node tools/check-cloud.js` tests `firestore.rules` and family accounts in the app against the local Firebase emulators (needs Java). Setup and command are at the top of the file.
 - `npx firebase deploy --only firestore:rules` publishes `firestore.rules` from the command line instead of the console (after `npx firebase login`).
 - `node tools/simulate.js [games] [skill]` plays bot games and prints generator speed, how often rounds land in the difficulty band, and game length.
-- `node tools/curve.js [games] [profiles]` measures the difficulty curve: loss chance per round at each level for four bot skill levels, and how far each gets in a normal game. Use this after changing `engine/difficulty.js`.
+- `node tools/curve.js [games] [profiles|all] [mode]` measures the difficulty curve: loss chance per round at each level for four bot skill levels, and how far each gets in a normal game. Use this after changing `engine/difficulty.js`.
 
 ## Files
 
 | File | What it does |
 | --- | --- |
-| `engine/board.js` | 8x8 board as row bitmasks, placement checks, simultaneous row and column clearing |
+| `engine/board.js` | 8x8 board as row bitmasks, placement checks, simultaneous row and column clearing, and what the board does afterwards in each mode |
 | `engine/pieces.js` | 37 fixed shapes (no rotation), each tagged easy, medium or hard |
 | `engine/solver.js` | Checks whether pieces can be placed in a given order, and counts which of the 6 orders work |
 | `engine/generator.js` | `dealRound(board, rng, difficulty)` deals three pieces that are solvable in at least one order |
@@ -80,6 +80,16 @@ The config values are identifiers, not secrets: they are meant to be in the app.
 | `app/feedback.js` | Optional sound (generated tones) and vibration, both off by default |
 | `app/app.css` | Look: level colors, safe areas, no page scroll or zoom |
 | `app/icons/` | App icons (`icon.svg` is the source) |
+
+## Modes
+
+New game lets each player pick a mode. It is remembered per player, and every mode has its own top 10.
+
+- **Classic**: full lines vanish, nothing else moves.
+- **Slide**: every cleared line pulls the part of the board on the centre side of it one step toward its nearest edge, as a rigid block. A row in the bottom half lets everything above it slide down, a row in the top half lets everything below slide up, and columns do the same sideways. The freed line appears at the opposite edge. Lines in both halves at once push the edge rows inward; the order lines are handled in never changes the result, and a slide never fills a new line. A faint cross on the board marks the halves, and arrows show the direction while dragging.
+- **Gravity**: the same directions, but every block falls on its own until it lands (rows first, then columns). Lines filled by the fall clear too (a chain), and each further link counts as one more combo step.
+
+The solver and generator use the same `placeAndClear(rows, piece, r, c, mode)`, so every round stays solvable in each mode. Only classic scores go into the synced top 10 and the family leaderboard; slide and gravity lists come from the game history (which syncs too).
 
 ## How the generator works
 
@@ -108,5 +118,7 @@ Measured with `node tools/curve.js 60`. Bots place pieces sensibly; they differ 
 | 10 | 12.9% | 9.5% | 6.2% | 2.2% |
 
 Normal games from level 1 (median): kid reaches level 6 after 35 rounds, casual level 7 after 40, attentive level 10 after 52, strong level 10 after 83.
+
+Slide (`node tools/curve.js 40 all slide`) with the same table is somewhat harder: at level 10 kid 16.8%, casual 12.5%, attentive 8.0%, strong 3.1% per round, and from level 1 a strong bot reaches level 10 after 67 rounds. Gravity is the relaxed mode: below 1% per round even for the kid bot at level 10, and still about 1-2% with only hard pieces and one working order, because falling blocks fill holes and chains clear the board.
 
 Level 10 is close to the ceiling of what a solvable-every-round generator can do: more hard pieces or a stricter band barely moved the numbers. A player who always checks the order never loses.

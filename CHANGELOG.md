@@ -1,5 +1,14 @@
 # Changelog
 
+## Slide and gravity modes (2026-11-14)
+
+- Two new modes next to classic, picked on the New game and game over cards and remembered per player. Slide: cleared lines pull the board toward the nearest edge as a rigid block. Gravity: blocks fall one by one in the same directions, with chain reactions. Rules in the README.
+- `placeAndClear(rows, piece, r, c, mode, track)` returns every clear step and, with `track`, where each block moved. The solver, generator and `place()` take the mode; `newGame({ mode })` saves it in the state. Old saved games play as classic.
+- Scoring: each further link of a gravity chain counts as one more combo step.
+- The app replays clears: cleared cells flash, then moved blocks glide into place (skipped with reduced motion). A faint cross marks the halves, arrows on the board show where things will move, and a chain shows a toast.
+- Each mode has its own top 10 and family bests on the Scores card; the game list names the mode. The synced top 10 and the family leaderboard stay classic, so `firestore.rules` is unchanged.
+- Tests for every slide case from the concept, gravity falls and chains, and per-mode top 10s. `tools/curve.js` takes a mode. Service worker `blockblast-v5`.
+
 ## Start level and game list (2026-10-10)
 
 - New game and the game over card let a player pick a start level, up to the highest level they have reached. `newGame({ level })` deals that level's pieces from the first round; `state.startLevel` is saved with the game.

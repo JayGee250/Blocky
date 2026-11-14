@@ -1,8 +1,8 @@
 import { SIZE, canPlace, cloneBoard, placeAndClear } from './board.js';
 
 // Can the pieces be placed one after another in exactly this order,
-// with line clears happening between placements?
-export function solvableInOrder(rows, pieces) {
+// with line clears (and, in slide or gravity mode, the board moving) between placements?
+export function solvableInOrder(rows, pieces, mode = 'classic') {
   if (pieces.length === 0) return true;
   const [first, ...rest] = pieces;
   for (let r = 0; r <= SIZE - first.height; r++) {
@@ -10,8 +10,8 @@ export function solvableInOrder(rows, pieces) {
       if (!canPlace(rows, first, r, c)) continue;
       if (rest.length === 0) return true;
       const next = cloneBoard(rows);
-      placeAndClear(next, first, r, c);
-      if (solvableInOrder(next, rest)) return true;
+      placeAndClear(next, first, r, c, mode);
+      if (solvableInOrder(next, rest, mode)) return true;
     }
   }
   return false;
@@ -30,11 +30,11 @@ export function permutations(items) {
 // For every ordering of `pieces` (all n! of them, identical pieces counted
 // separately), report whether it can be fully placed. Identical orderings are
 // solved once.
-export function analyzeOrders(rows, pieces) {
+export function analyzeOrders(rows, pieces, mode = 'classic') {
   const cache = new Map();
   const orders = permutations(pieces.map((p, i) => ({ p, i }))).map((perm) => {
     const key = perm.map((x) => x.p.id).join(',');
-    if (!cache.has(key)) cache.set(key, solvableInOrder(rows, perm.map((x) => x.p)));
+    if (!cache.has(key)) cache.set(key, solvableInOrder(rows, perm.map((x) => x.p), mode));
     return { order: perm.map((x) => x.i), solvable: cache.get(key) };
   });
   const solvableCount = orders.filter((o) => o.solvable).length;
@@ -42,13 +42,13 @@ export function analyzeOrders(rows, pieces) {
 }
 
 // Fast existence check: is there any order that works?
-export function anyOrderSolvable(rows, pieces) {
+export function anyOrderSolvable(rows, pieces, mode = 'classic') {
   const tried = new Set();
   for (const perm of permutations(pieces)) {
     const key = perm.map((p) => p.id).join(',');
     if (tried.has(key)) continue;
     tried.add(key);
-    if (solvableInOrder(rows, perm)) return true;
+    if (solvableInOrder(rows, perm, mode)) return true;
   }
   return false;
 }
