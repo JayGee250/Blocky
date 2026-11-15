@@ -68,8 +68,9 @@ export function fitsAnywhere(rows, piece) {
 //            sideways. The freed line appears at the opposite edge. The result
 //            does not depend on the order lines are handled in, and sliding
 //            never fills a new line, so there are no chain reactions.
-//   gravity  every block falls on its own, in the same directions, until it
-//            lands on another block or the edge. Rows first, then columns.
+//   gravity  blocks fall in the same directions until they land on another
+//            block or the edge. Touching blocks hold together and fall as one
+//            body, so overhangs keep the holes under them. Rows first, then columns.
 //            Lines filled by the fall clear too, and so on (a chain).
 export const MODES = ['classic', 'slide', 'gravity'];
 export const HALF = SIZE / 2;
@@ -157,23 +158,62 @@ function slide(grid, clearedRows, clearedCols) {
   return out;
 }
 
-// Blocks fall one by one. Lines cleared only in the bottom half: the whole
+// Blocks fall toward an edge. Lines cleared only in the bottom half: the whole
 // board falls down (only in the top half: up). Both halves: the top half falls
 // up and the bottom half down. `vertical` false does the same for columns.
+// Blocks that touch (side by side or one above the other) hold together and
+// fall as one body until any of its blocks lands, so holes under an overhang
+// stay open. Bodies nearest the edge land first; repeat until nothing moves.
 function fall(grid, cleared, vertical) {
   if (!cleared.length) return;
   const far = cleared.some((k) => k >= HALF), near = cleared.some((k) => k < HALF);
   const segments = far && near ? [[0, HALF, -1], [HALF, SIZE, 1]] : [[0, SIZE, far ? 1 : -1]];
-  const at = (line, k) => (vertical ? k * SIZE + line : line * SIZE + k);
-  for (let line = 0; line < SIZE; line++) {
-    for (const [from, to, dir] of segments) {
-      const ids = [];
-      for (let k = from; k < to; k++) if (grid[at(line, k)] >= 0) ids.push(grid[at(line, k)]);
-      for (let k = from; k < to; k++) grid[at(line, k)] = -1;
-      if (dir > 0) ids.forEach((id, n) => { grid[at(line, to - ids.length + n)] = id; });
-      else ids.forEach((id, n) => { grid[at(line, from + n)] = id; });
+  // u runs along the fall, v across it.
+  const at = (u, v) => (vertical ? u * SIZE + v : v * SIZE + u);
+  for (const [from, to, dir] of segments) {
+    for (let moved = true; moved;) {
+      moved = false;
+      for (const body of bodies(grid, from, to, at)) {
+        const lead = (n) => body.every(([u, v]) => {
+          const u2 = u + n * dir;
+          if (u2 < from || u2 >= to) return false;
+          const id = grid[at(u2, v)];
+          return id < 0 || body.own.has(at(u2, v));
+        });
+        let d = 0;
+        while (lead(d + 1)) d++;
+        if (!d) continue;
+        const ids = body.map(([u, v]) => grid[at(u, v)]);
+        for (const [u, v] of body) grid[at(u, v)] = -1;
+        body.forEach(([u, v], n) => { grid[at(u + d * dir, v)] = ids[n]; });
+        moved = true;
+        break; // bodies may have merged: look again
+      }
     }
   }
+  function bodies(g, lo, hi, idx) {
+    const seen = new Set(), out = [];
+    for (let u = lo; u < hi; u++) for (let v = 0; v < SIZE; v++) {
+      if (g[idx(u, v)] < 0 || seen.has(idx(u, v))) continue;
+      const body = [], stack = [[u, v]];
+      seen.add(idx(u, v));
+      while (stack.length) {
+        const [cu, cv] = stack.pop();
+        body.push([cu, cv]);
+        for (const [nu, nv] of [[cu + 1, cv], [cu - 1, cv], [cu, cv + 1], [cu, cv - 1]]) {
+          if (nu < lo || nu >= hi || nv < 0 || nv >= SIZE || g[idx(nu, nv)] < 0 || seen.has(idx(nu, nv))) continue;
+          seen.add(idx(nu, nv));
+          stack.push([nu, nv]);
+        }
+      }
+      body.own = new Set(body.map(([bu, bv]) => idx(bu, bv)));
+      out.push(body);
+    }
+    // Nearest the edge first, so what lies below has landed already.
+    const reach = (b) => Math.max(...b.map(([bu]) => bu * dirOf(lo, hi)));
+    return out.sort((x, y) => reach(y) - reach(x));
+  }
+  function dirOf(lo, hi) { return segments.find(([f, t]) => f === lo && t === hi)[2]; }
 }
 
 // Debug helper: board as text, '#' filled, '.' empty.

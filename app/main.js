@@ -8,7 +8,7 @@ import { createFeedback } from './feedback.js';
 import { syncPlayer } from './sync.js';
 import { firebaseConfig } from './firebase-config.js';
 
-const COLORS = { dot: 'p1', line2: 'p2', line3: 'p6', square2: 'p1', corner3: 'p4', line4: 'p2', rect: 'p5', l4: 'p3', t4: 'p7', s4: 'p4', line5: 'p6', square3: 'p3', bigl5: 'p5' };
+const COLORS = { dot: 'p1', line2: 'p2', line3: 'p6', square2: 'p1', corner3: 'p4', line4: 'p2', rect: 'p5', l4: 'p3', t4: 'p7', s4: 'p4', line5: 'p6', square3: 'p3', bigl5: 'p5', plus5: 'p7', u5: 'p6', bigt5: 'p4', diag2: 'p1', diag3: 'p3' };
 // One hue and name per level, so the whole screen tells you where you are.
 const THEMES = [
   [130, 'Meadow'], [165, 'Mint'], [190, 'Lagoon'], [215, 'Sky'], [250, 'Lavender'],
@@ -18,7 +18,7 @@ const THEMES = [
 const MODE_INFO = {
   classic: ['Classic', 'Full lines vanish. Nothing else moves.'],
   slide: ['Slide', 'Full lines vanish and the board slides after them, toward the nearest edge.'],
-  gravity: ['Gravity', 'Full lines vanish and every block falls toward the nearest edge. Falls can fill more lines: the most relaxed mode.'],
+  gravity: ['Gravity', 'Full lines vanish and the blocks fall toward the nearest edge. Touching blocks fall together, and falls can fill more lines.'],
 };
 const modeName = (m) => MODE_INFO[m]?.[0] || MODE_INFO.classic[0];
 const color = (p) => `var(--${COLORS[p.family] || 'p2'})`;

@@ -311,7 +311,7 @@ test('slide: a cross of row and column moves both ways and never fills a new lin
   }
 });
 
-test('gravity: blocks fall one by one and fill holes', () => {
+test('gravity: loose blocks fall until they land', () => {
   const { board, res } = placeDot([
     '..#.....',
     '........',
@@ -332,6 +332,24 @@ test('gravity: blocks fall one by one and fill holes', () => {
     '........',
     '#.......',
     '###...#.',
+  ]);
+});
+
+test('gravity: touching blocks fall together and keep the hole under an overhang', () => {
+  const { board } = placeDot([
+    '........',
+    '........',
+    '........',
+    '........',
+    '##......',
+    '#.......',
+    '#######.',
+    '........',
+  ], 6, 7, 'gravity');
+  assert.deepEqual(board.slice(5), [
+    '........',
+    '##......',
+    '#.......',
   ]);
 });
 

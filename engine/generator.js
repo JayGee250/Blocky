@@ -2,7 +2,7 @@ import { PIECES } from './pieces.js';
 import { fitsAnywhere, placements } from './board.js';
 import { analyzeOrders, anyOrderSolvable, permutations } from './solver.js';
 
-const TIERS = ['easy', 'medium', 'hard'];
+const TIERS = ['easy', 'medium', 'hard', 'expert'];
 
 // Deals a round of `count` pieces that can all be placed on `rows` in at least
 // one order. Within that guarantee it aims for the difficulty's order band
