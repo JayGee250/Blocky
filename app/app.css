@@ -86,6 +86,16 @@ body::before {
 .cell.line { box-shadow: inset 0 0 0 3px var(--ok); }
 .cell.flash { animation: flash .25s ease-out; }
 @keyframes flash { from { background: var(--surface); } }
+/* Slide and gravity: a faint cross marks the halves, since which half a line is in decides where things move. */
+.board.split::before, .board.split::after { content: ""; position: absolute; background: rgba(255,255,255,.16); pointer-events: none; border-radius: 1px; }
+.board.split::before { left: 50%; top: 6px; bottom: 6px; width: 2px; transform: translateX(-50%); }
+.board.split::after { top: 50%; left: 6px; right: 6px; height: 2px; transform: translateY(-50%); }
+.cell.f { position: relative; z-index: 1; }
+.dirs {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 2; pointer-events: none;
+  font: 700 clamp(28px, 9cqw, 44px)/1 system-ui, sans-serif; color: #fff; text-shadow: 0 1px 4px rgba(0,0,0,.45); letter-spacing: .1em;
+}
+.dirs:empty { display: none; }
 .tray { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; height: min(28vw, 120px); flex: none; }
 .slot {
   display: flex; align-items: center; justify-content: center;

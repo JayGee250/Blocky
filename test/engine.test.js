@@ -163,3 +163,257 @@ test('a game can start at a higher level and climbs from there', () => {
   assert.equal(newGame({ level: 0 }).level, 1);
   assert.equal(newGame().startLevel, 1);
 });
+
+// ---------- slide and gravity modes ----------
+
+const MODE_SIZE = 8;
+// Fill one cell so the given row or column becomes full, the way a placed dot would.
+function placeDot(lines, r, c, mode) {
+  const b = boardFromStrings(lines);
+  const res = placeAndClear(b, getPiece('dot'), r, c, mode, true);
+  return { board: boardToString(b).split('\n'), res };
+}
+
+test('slide: a row in the bottom half lets everything above slide down', () => {
+  const { board, res } = placeDot([
+    '........',
+    '..#.....',
+    '..##....',
+    '.###..#.',
+    '....#.##',
+    '##...###',
+    '#######.',
+    '..#....#',
+  ], 6, 7, 'slide');
+  assert.deepEqual(res.clearedRows, [6]);
+  assert.deepEqual(board, [
+    '........',
+    '........',
+    '..#.....',
+    '..##....',
+    '.###..#.',
+    '....#.##',
+    '##...###',
+    '..#....#',
+  ]);
+  // The map follows each block: (3,1) moved to (4,1), the bottom row stayed.
+  assert.equal(res.steps[0].map[3 * 8 + 1], 4 * 8 + 1);
+  assert.equal(res.steps[0].map[7 * 8 + 2], 7 * 8 + 2);
+  assert.equal(res.steps[0].map[6 * 8 + 0], -1);
+});
+
+test('slide: a row in the top half lets everything below slide up', () => {
+  const { board } = placeDot([
+    '#.......',
+    '.#######',
+    '...#....',
+    '........',
+    '........',
+    '........',
+    '......#.',
+    '#......#',
+  ], 1, 0, 'slide');
+  assert.deepEqual(board, [
+    '#.......',
+    '...#....',
+    '........',
+    '........',
+    '........',
+    '......#.',
+    '#......#',
+    '........',
+  ]);
+});
+
+test('slide: rows in both halves at once push the edge rows inward', () => {
+  const { board } = placeDot([
+    '...#....',
+    '#######.',
+    '..##....',
+    '........',
+    '...#....',
+    '.##.....',
+    '########',
+    '#......#',
+  ], 1, 7, 'slide');
+  assert.deepEqual(board, [
+    '........',
+    '...#....',
+    '..##....',
+    '........',
+    '...#....',
+    '.##.....',
+    '#......#',
+    '........',
+  ]);
+});
+
+test('slide: a column in the right half lets everything left of it slide right', () => {
+  const { board, res } = placeDot([
+    '##...#..',
+    '#....#..',
+    '##...##.',
+    '#....#..',
+    '....##..',
+    '##...#..',
+    '#....#.#',
+    '###.....',
+  ], 7, 5, 'slide');
+  assert.deepEqual(res.clearedCols, [5]);
+  assert.deepEqual(board, [
+    '.##.....',
+    '.#......',
+    '.##...#.',
+    '.#......',
+    '.....#..',
+    '.##.....',
+    '.#.....#',
+    '.###....',
+  ]);
+});
+
+test('slide: a column in the left half lets everything right of it slide left', () => {
+  const { board } = placeDot([
+    '.#.....#',
+    '.#......',
+    '.#......',
+    '.#......',
+    '.#....#.',
+    '.#......',
+    '.#......',
+    '#.......',
+  ], 7, 1, 'slide');
+  assert.deepEqual(board, [
+    '......#.',
+    '........',
+    '........',
+    '........',
+    '.....#..',
+    '........',
+    '........',
+    '#.......',
+  ]);
+});
+
+test('slide: a cross of row and column moves both ways and never fills a new line', () => {
+  const rng = createRng(77);
+  for (let n = 0; n < 2000; n++) {
+    const lines = Array.from({ length: MODE_SIZE }, () => Array.from({ length: MODE_SIZE }, () => (rng.next() < 0.8 ? '#' : '.')).join(''));
+    const classic = boardFromStrings(lines), slid = boardFromStrings(lines);
+    const a = placeAndClear(classic, getPiece('dot'), 0, 0, 'classic');
+    const b = placeAndClear(slid, getPiece('dot'), 0, 0, 'slide');
+    if (!canPlace(boardFromStrings(lines), getPiece('dot'), 0, 0)) continue;
+    assert.deepEqual(b.clearedRows, a.clearedRows);
+    assert.equal(countFilled(slid), countFilled(classic));
+    assert.equal(b.steps.length <= 1, true);
+    for (let i = 0; i < MODE_SIZE; i++) assert.notEqual(slid[i], 255);
+    for (let j = 0; j < MODE_SIZE; j++) assert.equal(slid.every((v) => (v >> j) & 1), false);
+  }
+});
+
+test('gravity: loose blocks fall until they land', () => {
+  const { board, res } = placeDot([
+    '..#.....',
+    '........',
+    '.#......',
+    '........',
+    '#.......',
+    '........',
+    '#######.',
+    '#.....#.',
+  ], 6, 7, 'gravity');
+  assert.equal(res.steps.length, 1);
+  assert.deepEqual(board, [
+    '........',
+    '........',
+    '........',
+    '........',
+    '........',
+    '........',
+    '#.......',
+    '###...#.',
+  ]);
+});
+
+test('gravity: touching blocks fall together and keep the hole under an overhang', () => {
+  const { board } = placeDot([
+    '........',
+    '........',
+    '........',
+    '........',
+    '##......',
+    '#.......',
+    '#######.',
+    '........',
+  ], 6, 7, 'gravity');
+  assert.deepEqual(board.slice(5), [
+    '........',
+    '##......',
+    '#.......',
+  ]);
+});
+
+test('gravity: a fall that fills a line clears it too (chain), and scores more', () => {
+  // Clearing row 7 drops everything into the bottom row, which is then full again.
+  const { board, res } = placeDot([
+    '........',
+    '........',
+    '........',
+    '........',
+    '........',
+    '...##...',
+    '###..###',
+    '#######.',
+  ], 7, 7, 'gravity');
+  assert.equal(res.steps.length, 2);
+  assert.deepEqual(res.steps[1].clearedRows, [7]);
+  assert.deepEqual(board, Array(8).fill('........'));
+  const chain = res.steps.map((s) => s.clearedRows.length + s.clearedCols.length);
+  // The second link counts as one more combo step: 10 + 10 x 1.5.
+  assert.deepEqual(chain, [1, 1]);
+  assert.equal(scorePlacement({ cells: 1, lines: 2, combo: 0, boardCleared: false, chain }), 1 + 10 + 15);
+});
+
+test('gravity: rows in both halves split the board, top falls up and bottom down', () => {
+  const { board } = placeDot([
+    '........',
+    '#######.',
+    '........',
+    '..#.....',
+    '.....#..',
+    '........',
+    '########',
+    '........',
+  ], 1, 7, 'gravity');
+  assert.deepEqual(board, [
+    '..#.....',
+    '........',
+    '........',
+    '........',
+    '........',
+    '........',
+    '........',
+    '.....#..',
+  ]);
+});
+
+test('every mode deals solvable rounds and plays a game through', () => {
+  for (const mode of ['slide', 'gravity']) {
+    const state = newGame({ seed: 4242, mode });
+    assert.equal(state.mode, mode);
+    const rng = createRng(1);
+    for (let n = 0; n < 60 && !state.gameOver; n++) {
+      const tray = trayPieces(state);
+      const pieces = tray.filter((t) => !t.used).map((t) => t.piece);
+      if (tray.every((t) => !t.used)) assert.ok(anyOrderSolvable(state.board, pieces, mode));
+      const slot = tray.findIndex((t) => !t.used);
+      const spots = placements(state.board, tray[slot].piece);
+      const [r, c] = spots[rng.int(spots.length)];
+      const res = place(state, slot, r, c);
+      assert.ok(res.ok);
+    }
+    const copy = JSON.parse(JSON.stringify(state));
+    assert.equal(copy.mode, mode);
+  }
+  assert.equal(newGame({ seed: 1, mode: 'nonsense' }).mode, 'classic');
+});

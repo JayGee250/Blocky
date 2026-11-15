@@ -183,3 +183,32 @@ test('top 10 can be narrowed to games started at one level', () => {
   pr.deleteGame(p.id, 'a');
   assert.deepEqual(pr.top(p.id, 4).map((s) => s.score), [50]);
 });
+
+test('each mode has its own top 10; only classic goes into the synced list', () => {
+  const pr = createProfiles(memoryStorage());
+  const a = pr.addPlayer('Ana');
+  assert.equal(pr.mode(a.id), 'classic');
+  pr.setMode(a.id, 'gravity');
+  assert.equal(pr.mode(a.id), 'gravity');
+  pr.setMode(a.id, 'nonsense');
+  assert.equal(pr.mode(a.id), 'classic');
+
+  const finish = (mode, score) => {
+    const g = newGame({ seed: score, mode });
+    g.moves = 3; g.score = score; g.gameOver = true;
+    pr.saveGame(a.id, g, Array(64).fill(null));
+    return pr.addScore(a.id, { score, level: 1, gid: g.gid, mode });
+  };
+  assert.equal(finish('classic', 100).rank, 0);
+  assert.equal(finish('slide', 300).rank, 0);
+  assert.equal(finish('slide', 200).rank, 1);
+  assert.equal(finish('gravity', 50).rank, 0);
+
+  assert.deepEqual(pr.scores(a.id).map((s) => s.score), [100], 'the synced top 10 stays classic');
+  assert.deepEqual(pr.top(a.id).map((s) => s.score), [100]);
+  assert.deepEqual(pr.top(a.id, null, 'slide').map((s) => s.score), [300, 200]);
+  assert.deepEqual(pr.top(a.id, null, 'gravity').map((s) => s.score), [50]);
+  assert.equal(pr.best(a.id), 100);
+  assert.equal(pr.best(a.id, 'slide'), 300);
+  assert.equal(pr.history(a.id).find((e) => e.score === 300).mode, 'slide');
+});

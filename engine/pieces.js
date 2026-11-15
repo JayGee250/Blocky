@@ -1,6 +1,7 @@
 // Piece library. Pieces cannot be rotated, so every orientation is its own
 // shape. `tier` drives difficulty weighting: easy pieces are small and
-// forgiving, hard pieces are big or awkward.
+// forgiving, hard pieces are big or awkward, expert pieces (from level 6) have
+// gaps or arms that leave few places to go.
 
 function shape(id, family, tier, art) {
   const lines = art.trim().split('|');
@@ -57,6 +58,21 @@ export const PIECES = Object.freeze([
   shape('bigl5b', 'bigl5', 'hard', '###|..#|..#'),
   shape('bigl5c', 'bigl5', 'hard', '#..|#..|###'),
   shape('bigl5d', 'bigl5', 'hard', '..#|..#|###'),
+
+  // expert
+  shape('plus5', 'plus5', 'expert', '.#.|###|.#.'),
+  shape('u5a', 'u5', 'expert', '#.#|###'),
+  shape('u5b', 'u5', 'expert', '###|#.#'),
+  shape('u5c', 'u5', 'expert', '##|#.|##'),
+  shape('u5d', 'u5', 'expert', '##|.#|##'),
+  shape('bigt5a', 'bigt5', 'expert', '###|.#.|.#.'),
+  shape('bigt5b', 'bigt5', 'expert', '.#.|.#.|###'),
+  shape('bigt5c', 'bigt5', 'expert', '#..|###|#..'),
+  shape('bigt5d', 'bigt5', 'expert', '..#|###|..#'),
+  shape('diag2a', 'diag2', 'expert', '#.|.#'),
+  shape('diag2b', 'diag2', 'expert', '.#|#.'),
+  shape('diag3a', 'diag3', 'expert', '#..|.#.|..#'),
+  shape('diag3b', 'diag3', 'expert', '..#|.#.|#..'),
 ]);
 
 export const PIECES_BY_ID = Object.freeze(Object.fromEntries(PIECES.map((p) => [p.id, p])));

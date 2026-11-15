@@ -53,14 +53,14 @@ The config values are identifiers, not secrets: they are meant to be in the app.
 - `node tools/check-cloud.js` tests `firestore.rules` and family accounts in the app against the local Firebase emulators (needs Java). Setup and command are at the top of the file.
 - `npx firebase deploy --only firestore:rules` publishes `firestore.rules` from the command line instead of the console (after `npx firebase login`).
 - `node tools/simulate.js [games] [skill]` plays bot games and prints generator speed, how often rounds land in the difficulty band, and game length.
-- `node tools/curve.js [games] [profiles]` measures the difficulty curve: loss chance per round at each level for four bot skill levels, and how far each gets in a normal game. Use this after changing `engine/difficulty.js`.
+- `node tools/curve.js [games] [profiles|all] [mode]` measures the difficulty curve: loss chance per round at each level for four bot skill levels, and how far each gets in a normal game. Use this after changing `engine/difficulty.js`.
 
 ## Files
 
 | File | What it does |
 | --- | --- |
-| `engine/board.js` | 8x8 board as row bitmasks, placement checks, simultaneous row and column clearing |
-| `engine/pieces.js` | 37 fixed shapes (no rotation), each tagged easy, medium or hard |
+| `engine/board.js` | 8x8 board as row bitmasks, placement checks, simultaneous row and column clearing, and what the board does afterwards in each mode |
+| `engine/pieces.js` | 50 fixed shapes (no rotation), each tagged easy, medium, hard or expert |
 | `engine/solver.js` | Checks whether pieces can be placed in a given order, and counts which of the 6 orders work |
 | `engine/generator.js` | `dealRound(board, rng, difficulty)` deals three pieces that are solvable in at least one order |
 | `engine/difficulty.js` | One row of difficulty knobs per level (piece mix, order band, tightness) and lines per level |
@@ -81,6 +81,16 @@ The config values are identifiers, not secrets: they are meant to be in the app.
 | `app/app.css` | Look: level colors, safe areas, no page scroll or zoom |
 | `app/icons/` | App icons (`icon.svg` is the source) |
 
+## Modes
+
+New game lets each player pick a mode. It is remembered per player, and every mode has its own top 10.
+
+- **Classic**: full lines vanish, nothing else moves.
+- **Slide**: every cleared line pulls the part of the board on the centre side of it one step toward its nearest edge, as a rigid block. A row in the bottom half lets everything above it slide down, a row in the top half lets everything below slide up, and columns do the same sideways. The freed line appears at the opposite edge. Lines in both halves at once push the edge rows inward; the order lines are handled in never changes the result, and a slide never fills a new line. A faint cross on the board marks the halves, and arrows show the direction while dragging.
+- **Gravity**: the same directions, but blocks fall until they land (rows first, then columns). Touching blocks hold together and fall as one body, so a hole under an overhang stays open. Lines filled by the fall clear too (a chain), and each further link counts as one more combo step.
+
+The solver and generator use the same `placeAndClear(rows, piece, r, c, mode)`, so every round stays solvable in each mode. Only classic scores go into the synced top 10 and the family leaderboard; slide and gravity lists come from the game history (which syncs too).
+
 ## How the generator works
 
 1. Build a pool of pieces that fit somewhere on the current board, weighted by the level's easy/medium/hard mix.
@@ -96,17 +106,28 @@ Measured with `node tools/curve.js 60`. Bots place pieces sensibly; they differ 
 
 | Level | kid | casual | attentive | strong |
 | --- | --- | --- | --- | --- |
-| 1 | 0.3% | 0.1% | 0% | 0% |
-| 2 | 0.5% | 0.1% | 0% | 0% |
-| 3 | 0.7% | 0.1% | 0% | 0% |
-| 4 | 2.7% | 1.2% | 0.5% | 0.1% |
-| 5 | 4.3% | 2.3% | 1.0% | 0.3% |
-| 6 | 5.8% | 3.2% | 1.6% | 0.4% |
-| 7 | 9.0% | 6.2% | 3.1% | 0.8% |
-| 8 | 11.6% | 6.8% | 4.3% | 1.2% |
-| 9 | 13.4% | 9.9% | 5.7% | 1.8% |
-| 10 | 12.9% | 9.5% | 6.2% | 2.2% |
+| 1 | 0.3% | 0% | 0% | 0% |
+| 2 | 0.5% | 0.2% | 0% | 0% |
+| 3 | 0.7% | 0.2% | 0% | 0% |
+| 4 | 2.9% | 1.2% | 0.5% | 0.1% |
+| 5 | 4.5% | 2.1% | 1.2% | 0.2% |
+| 6 | 6.7% | 4.1% | 1.8% | 0.6% |
+| 7 | 9.0% | 6.7% | 2.8% | 0.9% |
+| 8 | 12.1% | 8.6% | 4.4% | 1.4% |
+| 9 | 15.3% | 10.7% | 5.6% | 2.7% |
+| 10 | 16.5% | 12.2% | 6.1% | 2.8% |
 
-Normal games from level 1 (median): kid reaches level 6 after 35 rounds, casual level 7 after 40, attentive level 10 after 52, strong level 10 after 83.
+Normal games from level 1 (median): kid reaches level 6 after 35 rounds, casual level 7 after 39, attentive level 9 after 50, strong level 10 after 63.
+
+Expert pieces (plus, U, big T, diagonals) join from level 6 and make levels 6-10 noticeably harder than before (level 10 was 12.9 / 9.5 / 6.2 / 2.2%).
+
+Other modes (`node tools/curve.js 40 all slide|gravity`), level 10 per round:
+
+| Mode | kid | casual | attentive | strong | strong from level 1 |
+| --- | --- | --- | --- | --- | --- |
+| Slide | 16.5% | 12.9% | 8.1% | 2.9% | level 10 after 62 rounds |
+| Gravity | 9.0% | 7.2% | 4.1% | 1.0% | level 10 after 101 rounds |
+
+Gravity was almost impossible to lose while every block fell on its own (under 1% per round at level 10 even for the kid bot, whatever the piece mix). Now that touching blocks fall together and overhangs keep their holes, it plays somewhat easier than classic.
 
 Level 10 is close to the ceiling of what a solvable-every-round generator can do: more hard pieces or a stricter band barely moved the numbers. A player who always checks the order never loses.

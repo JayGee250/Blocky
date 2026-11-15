@@ -2,18 +2,25 @@
 // Plain ES modules, no build step. tools/build-play.js inlines this file and
 // its imports into web/play.html for a single-file preview, so keep every
 // import on one line.
-import { newGame, place, trayPieces, canPlaceSlot, isFilled, cloneBoard, FULL_ROW, LINES_PER_LEVEL, MAX_LEVEL } from '../engine/index.js';
-import { createProfiles, MAX_NAME, MAX_HISTORY } from './profiles.js';
+import { newGame, place, trayPieces, canPlaceSlot, isFilled, cloneBoard, FULL_ROW, LINES_PER_LEVEL, MAX_LEVEL, HALF, modeOf } from '../engine/index.js';
+import { createProfiles, MAX_NAME, MAX_HISTORY, modeOfEntry } from './profiles.js';
 import { createFeedback } from './feedback.js';
 import { syncPlayer } from './sync.js';
 import { firebaseConfig } from './firebase-config.js';
 
-const COLORS = { dot: 'p1', line2: 'p2', line3: 'p6', square2: 'p1', corner3: 'p4', line4: 'p2', rect: 'p5', l4: 'p3', t4: 'p7', s4: 'p4', line5: 'p6', square3: 'p3', bigl5: 'p5' };
+const COLORS = { dot: 'p1', line2: 'p2', line3: 'p6', square2: 'p1', corner3: 'p4', line4: 'p2', rect: 'p5', l4: 'p3', t4: 'p7', s4: 'p4', line5: 'p6', square3: 'p3', bigl5: 'p5', plus5: 'p7', u5: 'p6', bigt5: 'p4', diag2: 'p1', diag3: 'p3' };
 // One hue and name per level, so the whole screen tells you where you are.
 const THEMES = [
   [130, 'Meadow'], [165, 'Mint'], [190, 'Lagoon'], [215, 'Sky'], [250, 'Lavender'],
   [285, 'Orchid'], [325, 'Berry'], [355, 'Coral'], [22, 'Sunset'], [44, 'Gold'],
 ];
+// Game modes: what the board does after lines clear (engine/board.js).
+const MODE_INFO = {
+  classic: ['Classic', 'Full lines vanish. Nothing else moves.'],
+  slide: ['Slide', 'Full lines vanish and the board slides after them, toward the nearest edge.'],
+  gravity: ['Gravity', 'Full lines vanish and the blocks fall toward the nearest edge. Touching blocks fall together, and falls can fill more lines.'],
+};
+const modeName = (m) => MODE_INFO[m]?.[0] || MODE_INFO.classic[0];
 const color = (p) => `var(--${COLORS[p.family] || 'p2'})`;
 const esc = (s) => String(s).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 
@@ -35,24 +42,33 @@ THEMES.forEach(([h]) => { const i = document.createElement('i'); i.style.setProp
 
 // ---------- game screen ----------
 
+// What each cell shows: its color, or null when empty.
+function boardLook() {
+  return boardColors.map((col, i) => (isFilled(state.board, i >> 3, i & 7) ? col || 'var(--p2)' : null));
+}
+function paintBoard(look) {
+  look.forEach((col, i) => {
+    const el = cells[i];
+    el.classList.toggle('f', !!col);
+    el.style.background = col || '';
+  });
+}
+
 function render() {
-  for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
-    const el = cells[r * 8 + c];
-    const f = isFilled(state.board, r, c);
-    el.className = 'cell' + (f ? ' f' : '');
-    el.style.background = f ? (boardColors[r * 8 + c] || 'var(--p2)') : '';
-  }
+  if (!animating) paintBoard(boardLook());
+  boardEl.classList.toggle('split', modeOf(state) !== 'classic');
   $('score').textContent = state.score;
   $('who').textContent = player.name;
-  $('best').textContent = Math.max(state.score, profiles.best(player.id));
+  $('best').textContent = Math.max(state.score, profiles.best(player.id, modeOf(state)));
   $('lvl').textContent = state.level;
   applyTheme();
   const into = state.linesCleared % LINES_PER_LEVEL;
-  if (state.level >= MAX_LEVEL) { $('lvlbar').style.width = '100%'; $('lvlhint').textContent = 'Top level'; }
+  const mode = modeOf(state) === 'classic' ? '' : `${modeName(modeOf(state))} · `;
+  if (state.level >= MAX_LEVEL) { $('lvlbar').style.width = '100%'; $('lvlhint').textContent = mode + 'Top level'; }
   else {
     $('lvlbar').style.width = (100 * into / LINES_PER_LEVEL) + '%';
     const left = LINES_PER_LEVEL - into;
-    $('lvlhint').textContent = `${left} line${left === 1 ? '' : 's'} to level ${state.level + 1}`;
+    $('lvlhint').textContent = `${mode}${left} line${left === 1 ? '' : 's'} to level ${state.level + 1}`;
   }
   renderTray();
 }
@@ -103,7 +119,7 @@ function cellSize() { return (boardEl.clientWidth - 2 * PAD - 7 * GAP) / 8; }
 trayEl.addEventListener('pointerdown', (e) => {
   if (drag || !e.isPrimary) return;
   const s = e.target.closest('.slot');
-  if (!s || state.gameOver) return;
+  if (!s || state.gameOver || animating) return;
   const slot = Number(s.dataset.slot);
   const t = state.tray[slot];
   if (!t || t.used) return;
@@ -134,16 +150,87 @@ function move(e) {
   if (String(target) !== String(drag.target)) { drag.target = target; preview(); }
 }
 
+// Arrows for slide and gravity: which way the board will move after the drop.
+const dirsEl = document.createElement('div');
+dirsEl.className = 'dirs';
+dirsEl.setAttribute('aria-hidden', 'true');
+boardEl.appendChild(dirsEl);
+
 function preview() {
   for (const el of cells) el.classList.remove('ok', 'line');
+  dirsEl.textContent = '';
   if (!drag || !drag.target) return;
   const [r, c] = drag.target;
   const test = cloneBoard(state.board);
   for (const [dr, dc] of drag.piece.cells) { cells[(r + dr) * 8 + c + dc].classList.add('ok'); test[r + dr] |= 1 << (c + dc); }
+  const rows = [], cols = [];
   for (let i = 0; i < 8; i++) {
-    if (test[i] === FULL_ROW) for (let j = 0; j < 8; j++) cells[i * 8 + j].classList.add('line');
-    if (test.every((row) => (row >> i) & 1)) for (let j = 0; j < 8; j++) cells[j * 8 + i].classList.add('line');
+    if (test[i] === FULL_ROW) { rows.push(i); for (let j = 0; j < 8; j++) cells[i * 8 + j].classList.add('line'); }
+    if (test.every((row) => (row >> i) & 1)) { cols.push(i); for (let j = 0; j < 8; j++) cells[j * 8 + i].classList.add('line'); }
   }
+  if (modeOf(state) === 'classic') return;
+  const arrows = [];
+  if (rows.some((i) => i < HALF)) arrows.push('↑');
+  if (rows.some((i) => i >= HALF)) arrows.push('↓');
+  if (cols.some((j) => j < HALF)) arrows.push('←');
+  if (cols.some((j) => j >= HALF)) arrows.push('→');
+  dirsEl.textContent = arrows.join(' ');
+}
+
+// ---------- clearing, sliding and falling ----------
+// The engine has already moved everything; this replays it: cleared cells
+// flash, then the blocks that moved glide from their old cell to the new one.
+let animating = false;
+const calm = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const FLASH_MS = 170, MOVE_MS = 220;
+
+// Colors before the clear -> one frame per step, and the colors at the end.
+function replay(look, steps) {
+  const frames = [];
+  let cur = look.slice();
+  for (const step of steps) {
+    const cleared = [];
+    for (const i of step.clearedRows) for (let j = 0; j < 8; j++) cleared.push(i * 8 + j);
+    for (const j of step.clearedCols) for (let i = 0; i < 8; i++) cleared.push(i * 8 + j);
+    for (const k of cleared) cur[k] = null;
+    const afterClear = cur.slice();
+    const next = Array(64).fill(null), moved = [];
+    cur.forEach((col, k) => {
+      const to = step.map ? step.map[k] : k;
+      if (col && to >= 0) { next[to] = col; if (to !== k) moved.push([k, to]); }
+    });
+    cur = next;
+    frames.push({ cleared, afterClear, moved, look: cur.slice() });
+  }
+  return { frames, look: cur };
+}
+
+async function play(frames) {
+  animating = true;
+  try {
+    for (const [n, f] of frames.entries()) {
+      paintBoard(f.afterClear);
+      for (const k of new Set(f.cleared)) flash(k);
+      if (!f.moved.length || calm()) { paintBoard(f.look); continue; }
+      await wait(FLASH_MS);
+      paintBoard(f.look);
+      const step = cellSize() + GAP;
+      for (const [from, to] of f.moved) glide(cells[to], ((from & 7) - (to & 7)) * step, ((from >> 3) - (to >> 3)) * step);
+      await wait(MOVE_MS + (n < frames.length - 1 ? 60 : 0));
+    }
+  } finally {
+    animating = false;
+    paintBoard(boardLook());
+  }
+}
+function glide(el, dx, dy) {
+  el.style.transition = 'none';
+  el.style.transform = `translate(${dx}px, ${dy}px)`;
+  void el.offsetWidth;
+  el.style.transition = `transform ${MOVE_MS}ms ease-out`;
+  el.style.transform = '';
+  setTimeout(() => { el.style.transition = ''; }, MOVE_MS + 30);
 }
 
 function end(e) {
@@ -156,19 +243,20 @@ function end(e) {
   if (!target) return;
   const [r, c] = target;
   const col = color(piece);
-  for (const [dr, dc] of piece.cells) boardColors[(r + dr) * 8 + c + dc] = col;
+  const look = boardLook();
+  for (const [dr, dc] of piece.cells) look[(r + dr) * 8 + c + dc] = col;
   const res = place(state, slot, r, c);
   if (!res.ok) return;
-  for (const i of res.clearedRows) for (let j = 0; j < 8; j++) boardColors[i * 8 + j] = null;
-  for (const j of res.clearedCols) for (let i = 0; i < 8; i++) boardColors[i * 8 + j] = null;
+  const { frames, look: after } = replay(look, res.steps);
+  boardColors = after;
   save();
+  const shown = frames.length ? play(frames) : Promise.resolve();
   render();
-  for (const i of res.clearedRows) for (let j = 0; j < 8; j++) flash(i * 8 + j);
-  for (const j of res.clearedCols) for (let i = 0; i < 8; i++) flash(i * 8 + j);
-  const lines = res.clearedRows.length + res.clearedCols.length;
+  const lines = res.lines;
   if (lines) feedback.clear(lines); else feedback.place();
-  if (res.levelUp && !res.gameOver) { toast(`Level ${state.level} · ${THEMES[state.level - 1][1]}`); feedback.levelUp(); }
-  if (res.gameOver) setTimeout(gameOver, 350);
+  if (res.steps.length > 1) toast(`Chain × ${res.steps.length}`);
+  else if (res.levelUp && !res.gameOver) { toast(`Level ${state.level} · ${THEMES[state.level - 1][1]}`); feedback.levelUp(); }
+  if (res.gameOver) shown.then(() => setTimeout(gameOver, 350));
   if (reloadAfterDrag) { reloadAfterDrag = false; reloadGame(); }
 }
 function flash(i) { const el = cells[i]; el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
@@ -194,16 +282,16 @@ function startAs(id) {
   player = profiles.setCurrent(id);
   const saved = profiles.loadGame(id);
   if (saved) { state = saved.state; boardColors = saved.colors; }
-  else { state = newGame({ level: profiles.startLevel(id) }); boardColors = Array(64).fill(null); save(); }
+  else { state = newGame({ level: profiles.startLevel(id), mode: profiles.mode(id) }); boardColors = Array(64).fill(null); save(); }
   hideCard();
   render();
   sync(id);
 }
 
 // A game in progress that gets replaced stays in the game list as abandoned.
-function restart(level = profiles.startLevel(player.id)) {
+function restart(level = profiles.startLevel(player.id), mode = profiles.mode(player.id)) {
   if (state.moves > 0 && !state.gameOver && state.gid) profiles.abandonGame(player.id, state.gid);
-  state = newGame({ level });
+  state = newGame({ level, mode });
   boardColors = Array(64).fill(null);
   save(); hideCard(); render();
 }
@@ -244,7 +332,7 @@ function reloadGame() {
   if (!player || state.gameOver) return;
   const saved = profiles.loadGame(player.id);
   if (saved) { state = saved.state; boardColors = saved.colors; }
-  else { state = newGame({ level: profiles.startLevel(player.id) }); boardColors = Array(64).fill(null); profiles.saveGame(player.id, state, boardColors); }
+  else { state = newGame({ level: profiles.startLevel(player.id), mode: profiles.mode(player.id) }); boardColors = Array(64).fill(null); profiles.saveGame(player.id, state, boardColors); }
   render();
 }
 
@@ -398,12 +486,36 @@ const levelText = (s) => {
   const from = s.startLevel || 1;
   return from === 1 ? `level ${s.level}` : `from level ${from}${s.level > from ? ` to ${s.level}` : ''}`;
 };
+const modeText = (e) => (modeOfEntry(e) === 'classic' ? '' : `${modeName(modeOfEntry(e))} · `);
 
 function scoresList(list, highlight) {
   if (!list.length) return '<p>No scores yet. Finish a game to get on the list.</p>';
   return '<ol class="scores">' + list.map((s, i) =>
     `<li class="${i === highlight ? 'me' : ''}"><span class="num">${i + 1}</span><span class="lv">${levelText(s)}</span><span class="num">${s.score}</span></li>`
   ).join('') + '</ol>';
+}
+
+// ---------- mode ----------
+// Classic, slide or gravity, remembered per player.
+
+let pickedMode = 'classic';
+function modePicker() {
+  pickedMode = profiles.mode(player.id);
+  const seg = (m) => `<button type="button" data-mode="${m}" aria-pressed="${m === pickedMode}">${MODE_INFO[m][0]}</button>`;
+  return `<h3>Mode</h3><div class="seg" id="modeSeg">${Object.keys(MODE_INFO).map(seg).join('')}</div>
+    <p class="hint" id="modeHint">${MODE_INFO[pickedMode][1]}</p>`;
+}
+function wireModePicker() {
+  const el = $('modeSeg');
+  if (!el) return;
+  el.onclick = (e) => {
+    const b = e.target.closest('button[data-mode]');
+    if (!b) return;
+    pickedMode = b.dataset.mode;
+    profiles.setMode(player.id, pickedMode);
+    for (const x of el.children) x.setAttribute('aria-pressed', String(x === b));
+    $('modeHint').textContent = MODE_INFO[pickedMode][1];
+  };
 }
 
 // ---------- start level ----------
@@ -434,8 +546,8 @@ function wireLevelPicker() {
   };
 }
 
-function familyBests() {
-  const list = profiles.players().map((p) => ({ name: p.name, best: profiles.best(p.id) })).filter((p) => p.best).sort((a, b) => b.best - a.best);
+function familyBests(mode = 'classic') {
+  const list = profiles.players().map((p) => ({ name: p.name, best: profiles.best(p.id, mode) })).filter((p) => p.best).sort((a, b) => b.best - a.best);
   if (profiles.players().length < 2 || !list.length) return '';
   return `<h3>Family bests</h3><ol class="scores">${list.map((p, i) =>
     `<li><span class="num">${i + 1}</span><span>${esc(p.name)}</span><span class="num">${p.best}</span></li>`).join('')}</ol>`;
@@ -458,30 +570,37 @@ function familyGames() {
     .map((h) => ({ key: 'u:' + h.uid, name: h.name, games: (h.games || []).filter((e) => !e.deleted) }));
 }
 
-// Best game per person among games started at `start`.
-function familyBestsFrom(start) {
-  const best = (games) => games.filter((e) => e.status === 'over' && (e.startLevel || 1) === start).reduce((m, e) => Math.max(m, e.score || 0), 0);
+// Best game per person in one mode, among games started at `start` (null = any level).
+function familyBestsFrom(start, mode) {
+  const best = (games) => games.filter((e) => e.status === 'over' && modeOfEntry(e) === mode && (start == null || (e.startLevel || 1) === start)).reduce((m, e) => Math.max(m, e.score || 0), 0);
   const list = [
-    ...profiles.players().map((p) => ({ name: p.name, best: profiles.top(p.id, start)[0]?.score || 0, me: p.id === player.id })),
+    ...profiles.players().map((p) => ({ name: p.name, best: profiles.top(p.id, start, mode)[0]?.score || 0, me: p.id === player.id })),
     ...familyGames().map((h) => ({ name: h.name, best: best(h.games) })),
   ].filter((r) => r.best).sort((a, b) => b.best - a.best);
   if (list.length < 2) return '';
-  return `<h3>Family bests from level ${start}</h3><ol class="scores">${list.map((r, i) =>
+  return `<h3>Family bests${start == null ? '' : ` from level ${start}`}</h3><ol class="scores">${list.map((r, i) =>
     `<li class="${r.me ? 'me' : ''}"><span class="num">${i + 1}</span><span>${esc(r.name)}</span><span class="num">${r.best}</span></li>`).join('')}</ol>`;
 }
 
 // null = every game, otherwise only games started at that level.
-let scoreFilter = null;
+// Each mode has its own top 10; the card opens on the mode being played.
+let scoreFilter = null, scoreMode = null;
 function showScores(highlight = -1) {
   const p = profiles.players().find((x) => x.id === player.id);
   const where = linked(player.id) ? `Backed up to ${esc(p.email)}.` : 'Saved on this phone only.';
-  const starts = [...new Set(profiles.scores(player.id).concat(profiles.history(player.id).filter((e) => e.status === 'over')).map((s) => s.startLevel || 1))].sort((a, b) => a - b);
+  const mode = scoreMode || modeOf(state);
+  const own = profiles.top(player.id, null, mode).concat(profiles.history(player.id).filter((e) => e.status === 'over' && modeOfEntry(e) === mode));
+  const starts = [...new Set(own.map((s) => s.startLevel || 1))].sort((a, b) => a - b);
   if (!starts.includes(scoreFilter)) scoreFilter = null;
+  const modeChip = (m) => `<button type="button" data-mode="${m}" aria-pressed="${m === mode}">${MODE_INFO[m][0]}</button>`;
+  const modes = `<div class="seg" id="modeFilter" aria-label="Mode">${Object.keys(MODE_INFO).map(modeChip).join('')}</div>`;
   const chip = (v, label) => `<button type="button" data-start="${v ?? ''}" aria-pressed="${scoreFilter === v}">${label}</button>`;
   const chips = starts.length > 1 ? `<div class="chips" id="startFilter" aria-label="Started at level">${chip(null, 'All')}${starts.map((n) => chip(n, 'From ' + n)).join('')}</div>` : '';
-  const family = scoreFilter == null ? (linked(player.id) && familyBoard()) || familyBests() : familyBestsFrom(scoreFilter);
-  showCard(`<h2>${esc(player.name)}’s top 10</h2>${chips}
-    ${scoresList(profiles.top(player.id, scoreFilter), scoreFilter == null ? highlight : -1)}
+  // The family leaderboard in Firestore holds classic scores.
+  const family = scoreFilter == null && mode === 'classic' ? (linked(player.id) && familyBoard()) || familyBests() : familyBestsFrom(scoreFilter, mode);
+  const lit = mode === modeOf(state) && scoreFilter == null ? highlight : -1;
+  showCard(`<h2>${esc(player.name)}’s top 10</h2>${modes}${chips}
+    ${scoresList(profiles.top(player.id, scoreFilter, mode), lit)}
     ${family}
     <button type="button" id="historyBtn">All games</button>
     <p class="hint">${where} Every set of three pieces fits in some order; finding it is the game.</p>
@@ -490,6 +609,13 @@ function showScores(highlight = -1) {
     const b = e.target.closest('button[data-start]');
     if (!b) return;
     scoreFilter = b.dataset.start ? Number(b.dataset.start) : null;
+    showScores(highlight);
+  });
+  $('modeFilter').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-mode]');
+    if (!b) return;
+    scoreMode = b.dataset.mode;
+    scoreFilter = null;
     showScores(highlight);
   });
   on('historyBtn', () => showHistory());
@@ -529,7 +655,7 @@ function showHistory() {
   const chips = sources.length > 1 ? `<div class="chips" id="whoFilter" aria-label="Player">${chip(null, 'Everyone')}${sources.map((s) => chip(s.key, s.name)).join('')}</div>` : '';
   const items = rows.slice(0, historyShown).map(({ s, e }) => `<li>
       <div class="g-top"><span class="g-name">${esc(s.name)}</span><span class="num">${e.score}</span></div>
-      <div class="g-sub"><span>${gameTimes(e)}<br>${levelText(e)} · ${STATUS_WORD[e.status] || ''}</span>
+      <div class="g-sub"><span>${gameTimes(e)}<br>${modeText(e)}${levelText(e)} · ${STATUS_WORD[e.status] || ''}</span>
         ${s.pid && e.status !== 'playing' ? `<button type="button" class="quiet" data-del="${esc(s.pid)}|${esc(e.id)}" aria-label="Delete this game">Delete</button>` : ''}</div></li>`).join('');
   const where = familyGames().length ? 'Players on this phone and everyone in the family who is signed in.' : 'Games played on this phone.';
   showCard(`<h2>All games</h2>${chips}
@@ -567,32 +693,36 @@ function confirmDelete(pid, gid) {
 function gameOver() {
   feedback.gameOver();
   const ended = profiles.history(player.id).find((e) => e.id === state.gid);
-  const { rank } = profiles.addScore(player.id, { score: state.score, level: state.level, startLevel: state.startLevel || 1, gid: state.gid, date: ended?.end || Date.now() });
+  const mode = modeOf(state);
+  const { list, rank } = profiles.addScore(player.id, { score: state.score, level: state.level, startLevel: state.startLevel || 1, gid: state.gid, date: ended?.end || Date.now(), mode });
   sync();
   const left = state.tray.filter((t) => !t.used).length;
   const why = `The ${left === 1 ? 'last piece no longer fits' : `last ${left} pieces no longer fit`} after that move.`;
-  const note = rank === 0 && profiles.scores(player.id).length > 1 ? ' A new personal best!'
-    : rank >= 0 ? ` That is number ${rank + 1} on your top 10.` : '';
+  const which = mode === 'classic' ? '' : ` ${modeName(mode)}`;
+  const note = rank === 0 && list.length > 1 ? ` A new personal${which} best!`
+    : rank >= 0 ? ` That is number ${rank + 1} on your${which} top 10.` : '';
   showCard(`<h2>${state.score} points</h2><p>${why}${note}</p>
-    ${rank >= 0 ? scoresList(profiles.scores(player.id), rank) : ''}
+    ${rank >= 0 ? scoresList(list, rank) : ''}
+    ${modePicker()}
     ${levelPicker()}
     <button class="primary" id="againBtn" type="button">Play again</button>
     ${profiles.players().length > 1 ? '<button type="button" id="otherBtn">Change player</button>' : ''}`);
   wireLevelPicker();
-  on('againBtn', () => restart(pickedLevel));
-  on('otherBtn', () => { restart(pickedLevel); showPicker(); });
+  wireModePicker();
+  on('againBtn', () => restart(pickedLevel, pickedMode));
+  on('otherBtn', () => { restart(pickedLevel, pickedMode); showPicker(); });
 }
 
 function confirmNewGame() {
   const picker = levelPicker();
   const playing = state.moves > 0 && !state.gameOver;
-  if (!picker && !playing) return restart(1);
-  showCard(`<h2>${playing ? 'Start a new game?' : 'New game'}</h2>${picker}
+  showCard(`<h2>${playing ? 'Start a new game?' : 'New game'}</h2>${modePicker()}${picker}
     ${playing ? `<p>This game ends with ${state.score} points. It stays in the game list as abandoned and is not added to the top 10.</p>` : ''}
     <div class="row"><button id="keepBtn" type="button">${playing ? 'Keep playing' : 'Cancel'}</button><button class="primary" id="goBtn" type="button">New game</button></div>`, hideCard);
   wireLevelPicker();
+  wireModePicker();
   on('keepBtn', hideCard);
-  on('goBtn', () => restart(pickedLevel));
+  on('goBtn', () => restart(pickedLevel, pickedMode));
 }
 
 const sw = (id, label, sub, val) =>
@@ -676,7 +806,7 @@ function applySettings() {
   else document.documentElement.dataset.theme = settings.theme;
 }
 
-on('scoresBtn', () => showScores());
+on('scoresBtn', () => { scoreMode = null; showScores(); });
 on('newBtn', confirmNewGame);
 on('settingsBtn', showSettings);
 on('whoBtn', showPicker);
